@@ -107,6 +107,46 @@ const parseJsonObjectEnv = (key: string): Record<string, unknown> | null => {
   return parsed as Record<string, unknown>;
 };
 
+export interface R2Config {
+  /** S3 API endpoint: https://<account id>.r2.cloudflarestorage.com, unless R2_ENDPOINT overrides it. */
+  endpoint: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+}
+
+// Cloudflare R2, where file bytes live (deviation D2). An optional integration: ALL of its keys or
+// NONE. With none, the API still runs and the file endpoints answer 503; a partial set is almost
+// always a paste mistake, so it fails the boot instead of half-working.
+const R2_KEYS = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"] as const;
+const parseR2Config = (): R2Config | null => {
+  const present = R2_KEYS.filter((key) => (process.env[key] ?? "").trim().length > 0);
+  if (present.length === 0) return null;
+  if (present.length < R2_KEYS.length) {
+    const missing = R2_KEYS.filter((key) => !present.includes(key));
+    throw new Error(`R2 is partly configured: set all of ${R2_KEYS.join(", ")} or none (missing ${missing.join(", ")})`);
+  }
+  const accountId = requireEnv("R2_ACCOUNT_ID");
+  if (!/^[0-9a-f]{32}$/i.test(accountId)) {
+    throw new Error("R2_ACCOUNT_ID must be the 32-character Cloudflare account id");
+  }
+  const bucket = requireEnv("R2_BUCKET");
+  if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket)) {
+    throw new Error(`R2_BUCKET must be an R2 bucket name, like brimbox-files (got "${bucket}")`);
+  }
+  // Optional: another S3-compatible endpoint, for a local stand-in. Production leaves it unset.
+  const override = (process.env.R2_ENDPOINT ?? "").trim();
+  if (override && !/^https?:\/\/[^/]+$/.test(override)) {
+    throw new Error(`R2_ENDPOINT must be an origin like https://host:port (got "${override}")`);
+  }
+  return {
+    endpoint: override || `https://${accountId.toLowerCase()}.r2.cloudflarestorage.com`,
+    bucket,
+    accessKeyId: requireEnv("R2_ACCESS_KEY_ID"),
+    secretAccessKey: requireSecret("R2_SECRET_ACCESS_KEY", 32),
+  };
+};
+
 // Centralized, typed configuration. The ONLY reader of process.env (HOA protocol 04) — import
 // this instead of reading the environment anywhere else.
 export const config = {
@@ -133,4 +173,6 @@ export const config = {
   // DEFAULT_REMOTE_CONFIG with a matching type; anything else fails startup on purpose
   // (validated in remoteConfig.service.ts). See docs/REMOTE_CONFIG.md.
   remoteConfigOverrides: parseJsonObjectEnv("REMOTE_CONFIG_OVERRIDES"),
+  // File storage (Cloudflare R2). null → uploads, downloads and the storage jobs answer 503 / skip.
+  r2: parseR2Config(),
 };

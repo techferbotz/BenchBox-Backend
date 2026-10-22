@@ -12,6 +12,11 @@ export const getMe = async (req: Request, res: Response): Promise<void> => {
   sendSuccess(res, await accountService.getProfile(principal(req).userId));
 };
 
+// GET /api/v1/me/storage
+export const getStorage = async (req: Request, res: Response): Promise<void> => {
+  sendSuccess(res, await accountService.storageUsage(principal(req).userId));
+};
+
 // DELETE /api/v1/me — { idToken } (a fresh Google sign-in for this account) → {}
 export const deleteMe = async (req: Request, res: Response): Promise<void> => {
   const body = requireObjectBody(req.body);

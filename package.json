@@ -25,9 +25,14 @@
     "check:auth-db": "ts-node src/scripts/check-auth-db.ts",
     "check:tree": "ts-node src/scripts/check-tree.ts",
     "check:tree-db": "ts-node src/scripts/check-tree-db.ts",
-    "check:all": "npm run check:config && npm run check:legal && npm run check:auth && npm run check:tree"
+    "check:storage": "ts-node src/scripts/check-storage.ts",
+    "check:storage-db": "ts-node src/scripts/check-storage-db.ts",
+    "check:r2-live": "ts-node src/scripts/check-r2-live.ts",
+    "check:all": "npm run check:config && npm run check:legal && npm run check:auth && npm run check:tree && npm run check:storage"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1155.0",
+    "@aws-sdk/s3-request-presigner": "^3.1155.0",
     "@prisma/client": "^6.19.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",

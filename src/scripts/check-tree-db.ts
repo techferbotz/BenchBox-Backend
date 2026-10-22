@@ -4,7 +4,7 @@
 //   npm run check:tree-db        (DATABASE_URL from .env, schema migrated)
 //
 // Runs the real TreeService / SyncService / job code with a clock the script moves forward. Prisma is
-// used directly only for fixtures (users, file nodes until uploads exist in P3), to inspect state,
+// used directly only for fixtures (users, file nodes without content), to inspect state,
 // and to clean up what this run created.
 
 import dotenv from "dotenv";
@@ -58,8 +58,9 @@ const newUser = async (label: string): Promise<string> => {
   return user.id;
 };
 
-// Files can't be created through the API until uploads (P3), so they're inserted directly, stamped
-// with a fresh sync sequence the way a tree change would be.
+// Tree flows only need a file to exist, not its bytes: files are inserted directly (without content),
+// stamped with a fresh sync sequence the way a tree change would be. Files made by uploads, with
+// their storage accounting, are check:storage-db's.
 const fixtureFile = async (userId: string, parentId: string | null, name: string): Promise<string> => {
   const { syncSeq } = await prisma.user.update({ where: { id: userId }, data: { syncSeq: { increment: 1 } } });
   const id = randomUUID();
@@ -368,7 +369,7 @@ const main = async (): Promise<void> => {
     const u = await newUser("deleted");
     const f = await folder(u, "Private");
     await folder(u, "Nested", f.id);
-    await userRepository.anonymiseAndSignOut(u, now());
+    await userRepository.anonymiseAndSignOut(u, now(), []);
     assert.equal(await prisma.node.count({ where: { userId: u } }), 0);
   });
 

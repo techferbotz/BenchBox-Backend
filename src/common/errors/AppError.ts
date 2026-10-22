@@ -30,6 +30,13 @@ export class UnauthorizedError extends AppError {
   }
 }
 
+// 402 — the account needs billing set up first (e.g. storing more than the free allowance).
+export class PaymentRequiredError extends AppError {
+  constructor(message = "Payment required", code = "PAYMENT_REQUIRED") {
+    super(402, message, code);
+  }
+}
+
 // 403 — authenticated but not allowed (e.g. uploads while an account is read-only). Never used
 // for someone else's row: that is a 404, so existence never leaks (HOA protocol 04).
 export class ForbiddenError extends AppError {
@@ -56,6 +63,13 @@ export class ConflictError extends AppError {
 export class GoneError extends AppError {
   constructor(message = "Gone", code = "GONE") {
     super(410, message, code);
+  }
+}
+
+// 413 — something the request declares is over a size limit (e.g. a file larger than allowed).
+export class PayloadTooLargeError extends AppError {
+  constructor(message = "Too large", code = "PAYLOAD_TOO_LARGE") {
+    super(413, message, code);
   }
 }
 

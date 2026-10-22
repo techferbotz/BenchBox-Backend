@@ -2,7 +2,7 @@
   Reference doc — the current contract the BrimBox app builds against.
   Source of truth: the backend repo's docs/FRONTEND_API.md. Mirrored to
   BrimBox-Contract/backend/API.md whenever a CHANGELOG entry says this file moved.
-  Last refreshed: 2026-10-09 (BE-003).
+  Last refreshed: 2026-10-22 (BE-004).
 -->
 
 # BrimBox — Frontend (Client) API
@@ -44,6 +44,8 @@ show `message` only if you have nothing better:
 | `PAYLOAD_TOO_LARGE` | 413 | Body over 1 MB (bodies are small JSON; files go to storage directly) |
 | `RATE_LIMITED` | 429 | Too many requests. The `Retry-After` header says how many seconds to wait |
 | `SERVICE_UNAVAILABLE` | 503 | A feature isn't configured on the server yet |
+| `STORAGE_NOT_CONFIGURED` | 503 | File storage isn't set up on the server yet (uploads, downloads, thumbnails) |
+| `STORAGE_UNAVAILABLE` | 503 | File storage didn't answer. Nothing changed → retry with backoff |
 | `INTERNAL` | 500 | A server bug |
 
 Endpoint-specific codes are listed with each endpoint.
@@ -76,10 +78,11 @@ so they are listed together here:
 - **Access tokens expire** (live since BE-002, §4). Sign-in returns a short-lived access token (1 hour)
   **and** a refresh token for the device. The app refreshes silently; users are never sent back to
   sign-in on a timer.
-- **File bytes never go through this API.** The API hands out short-lived signed URLs; the app uploads
-  to and downloads from cloud storage directly. Large uploads are multipart and resumable. Never cache a
-  signed URL past its `expiresAt`.
-- **The app makes the thumbnails.** Each upload includes a small WebP preview made on the device.
+- **File bytes never go through this API** (live since BE-004, §8–9). The API hands out short-lived
+  signed URLs; the app uploads to and downloads from cloud storage directly. Large uploads are
+  multipart and resumable. Never cache a signed URL past its `expiresAt`.
+- **The app makes the thumbnails** (BE-004). Each upload can include a small WebP preview made on the
+  device.
 - **Sync is a change feed** (live since BE-003, §7) with an opaque cursor, designed for a local Room
   cache. No device clocks are involved anywhere.
 
@@ -106,7 +109,8 @@ start. Launch must never block on it: use compiled-in defaults, then the cached 
     "revision": "3f2a9c0d1b7e",
     "ttlSeconds": 3600,
     "config": {
-      "features": {},
+      "features": { "uploads": true },
+      "limits": { "maxFileSizeBytes": 10000000000, "maxThumbnailBytes": 262144 },
       "update": {
         "minSupportedBuild": 0,
         "recommendedBuild": 0,
@@ -128,7 +132,10 @@ start. Launch must never block on it: use compiled-in defaults, then the cached 
 
 | Key | Meaning |
 |---|---|
-| `features.*` | Kill switches, `true` = on. **None yet** — BrimBox adds one per feature as it ships. A key missing from the response means "use your compiled-in default (on)". |
+| `features.*` | Kill switches, `true` = on, one per feature as it ships. A key missing from the response means "use your compiled-in default (on)". |
+| `features.uploads` | `false` → hide the upload entry points (the API itself keeps working, so uploads already under way can finish). |
+| `limits.maxFileSizeBytes` | The largest file an upload may declare (10 GB). Check before starting; the server enforces this same value. |
+| `limits.maxThumbnailBytes` | The largest thumbnail an upload may declare (256 KB). |
 | `update.minSupportedBuild` | Builds below this must update to continue (hard block). `0` = none. |
 | `update.recommendedBuild` | Builds below this get a dismissible update nudge. `0` = none. |
 | `update.androidStoreUrl` / `iosStoreUrl` / `message` | Where to send the user, and optional copy. Nullable. |
@@ -251,6 +258,29 @@ live. Call it on sign-out, then clear both tokens locally.
 
 Returns the `user` object (same shape as in sign-in).
 
+### `GET /api/v1/me/storage`
+
+```json
+{
+  "success": true,
+  "data": {
+    "usedBytes": 1900000000,
+    "trashBytes": 300000,
+    "uploadingBytes": 0,
+    "freeBytes": 2000000000,
+    "limitBytes": 2000000000
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `usedBytes` | Everything the account stores, **the trash included**: a file counts until it is permanently deleted. |
+| `trashBytes` | The part of `usedBytes` that is in the trash. |
+| `uploadingBytes` | Reserved by uploads still in progress. |
+| `freeBytes` | The free allowance. |
+| `limitBytes` | The most the account may store right now. Until billing launches it equals `freeBytes`; `null` will mean no limit. |
+
 ### `GET /api/v1/me/sessions`
 
 The account's signed-in devices, most recently used first. `current` is `true` for the device making
@@ -297,8 +327,9 @@ Notifications themselves (usage alerts, bills) arrive in a later phase.
 
 `{ "idToken": "<Google idToken from a FRESH sign-in>" }` returns `{}`.
 
-Account deletion is irreversible, and from the file-storage phase onwards it takes every stored file
-with it. So it needs proof that the owner is present, not just a valid access token:
+Account deletion is irreversible and takes every stored file with it: the files stop counting at once
+and are removed from storage within 7 days. So it needs proof that the owner is present, not just a
+valid access token:
 1. Run Google sign-in again (same server client id).
 2. Send that idToken here within **10 minutes**.
 
@@ -325,17 +356,19 @@ These are 403s, not 401s, so they don't trigger your token-refresh flow.
 
 ### The node
 
-Folders and files are both **nodes**, and every endpoint returns them in one shape. Files arrive with
-uploads in a later phase; until then every node is a folder.
+Folders and files are both **nodes**, and every endpoint returns them in one shape. Folders are
+created with `POST /api/v1/folders`; files by uploads (§8).
 
 ```json
 {
   "id": "f94780da-cb57-449f-8114-b99d65aad94c",
   "parentId": null,
-  "kind": "folder",
-  "name": "Photos",
-  "size": 0,
-  "mimeType": null,
+  "kind": "file",
+  "name": "IMG_2041.jpg",
+  "size": 3480122,
+  "mimeType": "image/jpeg",
+  "contentId": "7c0e1d52-9a4b-4f0a-8d1e-2b5c6a7f8e90",
+  "hasThumbnail": true,
   "createdAt": "2026-10-09T15:46:18.516Z",
   "updatedAt": "2026-10-09T15:46:18.516Z",
   "trashedAt": null,
@@ -351,7 +384,10 @@ uploads in a later phase; until then every node is a folder.
 | `parentId` | The containing folder, or `null` for the root. |
 | `kind` | `"folder"` or `"file"`. |
 | `name` | Trimmed and Unicode-normalised. Empty once `deletedAt` is set. |
-| `size` | Bytes (files). |
+| `size` | Files: bytes, as measured in storage (never just as declared). `0` for folders. |
+| `mimeType` | Files: the type declared at upload. `null` for folders. |
+| `contentId` | Files: changes when the content does (a replacing upload), **not** on rename or move. Use it as the cache key for the thumbnail and for a downloaded copy. `null` for folders and tombstones. |
+| `hasThumbnail` | Files: whether `GET /api/v1/files/{id}/thumbnail` has an image (§9). |
 | `trashedAt` | Set while in the trash. |
 | `trashRootId` | While trashed, the item the user trashed. It equals `id` for the item shown in the trash, and its contents point at it. |
 | `deletedAt` | Set once permanently deleted: a tombstone. Drop it from your cache. |
@@ -432,6 +468,8 @@ foreign id, gets `404`.
 - **`DELETE /api/v1/trash`** empties the trash and returns `{ "purged": 12 }`.
 - **The trash empties itself:** anything in the trash for **30 days** is permanently deleted. The
   privacy policy promises this.
+- **Files in the trash still count** towards storage until permanently deleted (show `trashBytes`
+  from `GET /api/v1/me/storage` on the trash screen). Permanent deletion frees the space at once.
 
 ### `GET /api/v1/search?q=holiday`
 
@@ -472,3 +510,180 @@ Use it like this:
 The feed is ordered by the server's commit order, so it never skips a change, and no device clocks
 are involved. Everything changed in one action (e.g. trashing a folder of 50 items) arrives together
 with the same `syncSeq`.
+
+---
+
+## 8. Uploads (🔒)
+
+File bytes go **straight from the app to cloud storage** (Cloudflare R2) through short-lived signed
+URLs. This API starts uploads, hands out the URLs, and records the file once the bytes are in.
+
+### The flow
+
+1. **Generate two UUIDs:** the upload's `id` and the new file's `fileId`. Store them with the queued
+   upload, so every retry reuses them.
+2. **Make the thumbnail** (images and videos): a WebP, at most 512 px on the long side and at most
+   `limits.maxThumbnailBytes`. Note its exact size in bytes.
+3. **`POST /api/v1/uploads`** → the upload, and where to send the bytes.
+4. **Send the bytes:**
+   - `mode: "single"` (files up to 16 MiB): `PUT` the whole file to `put.url`.
+   - `mode: "multipart"`: get part URLs from `POST /api/v1/uploads/{id}/parts`, up to 50 at a time,
+     and `PUT` each part. Three or four in parallel is a good default.
+   - If you declared a thumbnail, `PUT` it to `thumbnailPut.url`.
+5. **`POST /api/v1/uploads/{id}/complete`** → the upload, now `completed`, with the file in `node`.
+
+**Sending bytes to a signed URL:**
+- `PUT` with the body's exact length as `Content-Length` (a file or byte-array body does this; don't
+  stream chunked). Each URL is signed for one exact size, and any other size is refused (`403`).
+- Send the URL's `headers` exactly as given (empty today). Never send your `Authorization` header to
+  storage.
+- A URL works until its `expiresAt` (at most an hour). For fresh ones, `GET` the upload (whole file,
+  thumbnail) or call the parts endpoint again (parts).
+- Never log or store signed URLs: whoever holds one can use it until it expires.
+
+### `POST /api/v1/uploads` — start
+
+```json
+{
+  "id": "<new UUID>",
+  "fileId": "<new UUID>",
+  "parentId": null,
+  "name": "IMG_2041.jpg",
+  "size": 3480122,
+  "mimeType": "image/jpeg",
+  "onConflict": "fail",
+  "thumbnail": { "size": 18342 }
+}
+```
+
+- `size`: the file's exact bytes, at most `limits.maxFileSizeBytes`. `0` is allowed.
+- `parentId`: a folder, or `null`/absent for the root.
+- `mimeType`: optional, default `application/octet-stream`. Parameters (`; charset=utf-8`) are
+  dropped. Downloads are served with this type.
+- `onConflict`, for a name already taken in the folder (ignoring case):
+  - `"fail"` (default): `409 NAME_CONFLICT` now, before any bytes move.
+  - `"rename"`: "IMG_2041 (1).jpg".
+  - `"replace"`: the new content replaces the existing **file** of that name. That file keeps its id,
+    name and place, so **the `node` you get back has the existing file's id, not your `fileId`**. Its
+    old content is deleted; there is no version history. A folder is never replaced: the new file is
+    numbered instead.
+- `thumbnail`: optional, `{ "size": <exact bytes> }`.
+
+Returns **201** with the upload, or **200** if this `id` already exists (retry freely):
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "3b6f…", "fileId": "f947…", "parentId": null,
+    "name": "IMG_2041.jpg", "size": 3480122, "mimeType": "image/jpeg", "onConflict": "fail",
+    "state": "pending",
+    "mode": "single", "partSize": null, "partCount": null,
+    "expiresAt": "2026-10-23T10:00:00.000Z",
+    "put": { "url": "https://…", "method": "PUT", "headers": {}, "expiresAt": "2026-10-22T11:00:00.000Z" },
+    "thumbnailPut": { "url": "https://…", "method": "PUT", "headers": {}, "expiresAt": "2026-10-22T11:00:00.000Z" },
+    "uploadedParts": null,
+    "node": null
+  }
+}
+```
+
+- **`expiresAt` (the upload's):** an upload untouched for 24 hours expires and its partial bytes are
+  deleted. Every call about it pushes that back, up to 6 days after it started.
+- **Multipart:** `partSize` is the size of every part but the last; part *n* is bytes
+  `(n−1)·partSize` up to `n·partSize`, and the last part is whatever remains.
+- **`state`:** `pending`, `completed`, `aborted`, `expired` or `failed`.
+
+| code | HTTP | When → what to do |
+|---|---|---|
+| `INVALID_NAME`, `NAME_CONFLICT`, `NOT_FOUND`, `NODE_TRASHED`, `NOT_A_FOLDER` | | As for folders (§6) |
+| `ID_CONFLICT` | 409 | The `id` or `fileId` is already used for something else → new UUIDs |
+| `INVALID_MIME_TYPE` | 400 | `mimeType` isn't `type/subtype` |
+| `FILE_TOO_LARGE` | 413 | `size` is over `limits.maxFileSizeBytes` |
+| `STORAGE_LIMIT_REACHED` | 402 | The account would go past `limitBytes` (`GET /api/v1/me/storage`). Until billing launches, that is the free allowance. |
+| `TOO_MANY_UPLOADS` | 409 | 50 uploads are already in progress → finish or cancel some |
+| `RATE_LIMITED` | 429 | More than 600 starts in 5 minutes |
+
+### `POST /api/v1/uploads/{id}/parts` — part URLs (multipart)
+
+`{ "partNumbers": [1, 2, 3] }`: 1–50 distinct numbers from 1 to `partCount`. Returns:
+
+```json
+{
+  "success": true,
+  "data": {
+    "parts": [
+      { "partNumber": 1, "size": 8388608, "url": "https://…", "method": "PUT", "headers": {}, "expiresAt": "…" }
+    ]
+  }
+}
+```
+
+Each URL is signed for that part's exact `size`. Sending a part again replaces it. A single upload
+answers `400 NOT_MULTIPART`.
+
+### `GET /api/v1/uploads/{id}` — resume
+
+After a dropped connection, or the app being killed:
+- **Multipart:** `uploadedParts` lists the parts storage already holds at the right size. Get URLs
+  for the rest, send them, then complete.
+- **Single:** call complete first. If it answers `UPLOAD_INCOMPLETE`, `PUT` the file again to the
+  fresh `put.url` from this response.
+- `thumbnailPut` is fresh too.
+- No longer `pending`? `completed`: the file is in `node`. `aborted`, `expired` or `failed`: start a
+  new upload with new ids.
+
+### `POST /api/v1/uploads/{id}/complete` — finish
+
+Body optional: `{ "onConflict": "rename" }` overrides the upload's choice (see `NAME_CONFLICT` below).
+
+The server measures what storage actually holds (the declared size is never trusted) and then, in
+one step, the file appears in its folder and in the sync feed, starts counting towards storage, and
+the upload becomes `completed`. Returns the upload with its `node`. Completing again returns the same
+file.
+
+- If the folder was deleted or trashed meanwhile, the file lands in the **root**.
+- Upload the thumbnail **before** completing. One sent later is ignored, and deleted.
+
+| code | HTTP | When → what to do |
+|---|---|---|
+| `UPLOAD_INCOMPLETE` | 409 | Parts, or the file, are missing → `GET` the upload, send what's missing, complete again |
+| `NAME_CONFLICT` | 409 | With `"fail"`, the name was taken while you uploaded. Nothing is lost: ask the user, then complete again with `{ "onConflict": "rename" }` or `"replace"` |
+| `SIZE_MISMATCH` | 409 | Storage holds a different number of bytes than declared. The upload is now `failed` → start a new one |
+| `UPLOAD_ENDED` | 410 | Cancelled, expired or failed → start a new upload with new ids |
+| `ID_CONFLICT` | 409 | The `fileId` became taken (an app bug) → cancel, and start again with new ids |
+
+### `DELETE /api/v1/uploads/{id}` — cancel
+
+Returns `{}`, and calling it again is fine. Whatever was uploaded is deleted about 75 minutes later,
+once every URL handed out for it has expired. A completed upload can't be cancelled
+(`409 UPLOAD_COMPLETED`): trash the file instead.
+
+**On every upload endpoint:** `404 NOT_FOUND` for an unknown upload (or another account's);
+`503 STORAGE_NOT_CONFIGURED` / `STORAGE_UNAVAILABLE` as in §1.
+
+---
+
+## 9. Downloads and thumbnails (🔒)
+
+### `GET /api/v1/files/{id}/download`
+
+```json
+{ "success": true, "data": { "url": "https://…", "expiresAt": "2026-10-22T10:15:00.000Z" } }
+```
+
+- The URL works for **15 minutes**. It serves the file with its real name and type
+  (`Content-Disposition: attachment`), and supports `Range`, so a download can resume and a video can
+  seek. After it expires, ask again.
+- Files in the trash can be downloaded too.
+- `404` for a folder, a permanently deleted file, or another account's id.
+
+### `GET /api/v1/files/{id}/thumbnail`
+
+A stable URL per file, for your image loader:
+- Request it with your `Authorization` header (on Android, an OkHttp interceptor for this host).
+- It answers **302** to the image: a WebP, valid for an hour. HTTP clients drop `Authorization` when a
+  redirect changes host, so the token never reaches storage.
+- Cache the image by the node's **`contentId`**. It changes only when the content does, so renames
+  and moves keep the cached thumbnail (Coil: set `diskCacheKey` and `memoryCacheKey` to `contentId`).
+- `404` when the file has no thumbnail (`hasThumbnail: false`): show a placeholder for its type.

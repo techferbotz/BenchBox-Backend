@@ -2,6 +2,8 @@ import { ForbiddenError, NotFoundError, UnauthorizedError } from "../../../commo
 import { VerifyGoogleIdToken, verifyGoogleIdToken } from "../../../integrations/googleVerifier";
 import { checkReauth } from "../../auth/auth.rules";
 import { sessionRepository } from "../../auth/repository/session.repository";
+import { meteringService, StorageUsageDto } from "../../metering/service/metering.service";
+import { accountCleanupJobs } from "../../outbox/outbox.jobs";
 import { SessionDto, toSessionDto, toUserDto, UserDto } from "../dto/account.dto";
 import { userRepository } from "../repository/user.repository";
 
@@ -75,11 +77,18 @@ export class AccountService {
         : new ForbiddenError("Confirm with Google again to delete your account", "REAUTH_REQUIRED");
     }
 
-    // Later phases hook in HERE, before the account is anonymised:
-    //   P3 — queue every stored file for purge (the delete-account page promises removal within
-    //        DELETION_STORAGE_PURGE_DAYS);
-    //   P5 — close a final statement and cancel the auto-pay mandate.
-    await userRepository.anonymiseAndSignOut(userId, now);
+    // P5 hooks in HERE, before the account is anonymised: close a final statement and cancel the
+    // auto-pay mandate.
+    //
+    // The stored files stop being billed in the same transaction, and the sweep of the account's
+    // objects is queued with it: the delete-account page promises removal from storage within
+    // DELETION_STORAGE_PURGE_DAYS (files.policy.ts says how that is kept).
+    await userRepository.anonymiseAndSignOut(userId, now, accountCleanupJobs(userId, now));
+  }
+
+  /** GET /api/v1/me/storage: what the account stores and may store. */
+  async storageUsage(userId: string): Promise<StorageUsageDto> {
+    return meteringService.usage(userId);
   }
 }
 

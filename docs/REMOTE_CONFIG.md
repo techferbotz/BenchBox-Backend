@@ -24,7 +24,9 @@ It is pure and synchronous: no database, so it answers even when Postgres is dow
 
 | Key | Default | Source |
 |---|---|---|
-| `features` | `{}` — no switches yet | One per feature as it ships, each `true` by default and announced with a `BE-nnn` |
+| `features.uploads` | `true` | Hides the app's upload entry points when `false` (BE-004). The API keeps working. |
+| `limits.maxFileSizeBytes` | `10000000000` | Imported from `MAX_FILE_SIZE_BYTES` (`modules/files/files.policy.ts`). Uploads obey the **resolved** value, so an override changes the limit and what the app is told together. |
+| `limits.maxThumbnailBytes` | `262144` | Imported from `MAX_THUMBNAIL_BYTES` |
 | `update.minSupportedBuild` / `recommendedBuild` | `0` / `0` | `remoteConfig.defaults.ts` |
 | `update.androidStoreUrl` / `iosStoreUrl` / `message` | `null` | Fill `androidStoreUrl` once the Play listing exists |
 | `maintenance.enabled` / `message` | `false` / `null` | `remoteConfig.defaults.ts` |
@@ -33,10 +35,15 @@ It is pure and synchronous: no database, so it answers even when Postgres is dow
 
 Planned additions follow protocol 10's "mirrored, never retyped" rule. Each value is imported from the
 module that enforces it:
-- `features.*` switches for uploads (P3) and sharing (P7). There's no sign-in switch: BrimBox can't be
-  used signed out, so `maintenance` is the lever there.
-- An `upload` section mirroring the server's limits: max file size, part size, concurrency.
-- A `billing` section with the limit-alert percentages.
+- `features.sharing` (P7). There's no sign-in switch: BrimBox can't be used signed out, so
+  `maintenance` is the lever there.
+- A `billing` section with the limit-alert percentages (P4).
+
+Part size and concurrency aren't in the config: the server decides the part size per upload and
+returns it, and the 50-uploads-in-progress cap answers with its own error code.
+
+**Example: lower the file size limit to 5 GB for everyone, without a deploy:**
+`REMOTE_CONFIG_OVERRIDES={"limits":{"maxFileSizeBytes":5000000000}}`
 
 ## Operating it
 

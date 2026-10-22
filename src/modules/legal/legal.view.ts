@@ -11,6 +11,7 @@
  * fill every TODO before publishing.
  */
 
+import { DELETION_STORAGE_PURGE_DAYS } from "../files/files.policy";
 import { TRASH_RETENTION_DAYS } from "../nodes/nodes.policy";
 
 // ── Shared across all documents (edit in one place) ──
@@ -33,9 +34,9 @@ export const LEGAL_PATHS = {
 
 // ── Per-document ──
 // Bump on each material change.
-export const PRIVACY_EFFECTIVE_DATE = "October 1, 2026";
+export const PRIVACY_EFFECTIVE_DATE = "October 22, 2026";
 export const TERMS_EFFECTIVE_DATE = "October 1, 2026";
-export const DELETE_ACCOUNT_EFFECTIVE_DATE = "October 1, 2026";
+export const DELETE_ACCOUNT_EFFECTIVE_DATE = "October 22, 2026";
 // TODO(legal): set the governing jurisdiction (e.g. "India", with the courts of a named city).
 export const TERMS_GOVERNING_LAW = "[your jurisdiction]";
 // Accounts are for adults: setting up an auto-pay mandate needs one, and India's DPDP Act treats
@@ -43,14 +44,17 @@ export const TERMS_GOVERNING_LAW = "[your jurisdiction]";
 export const MINIMUM_AGE = 18;
 
 // ── Public promises. Each lives with the module that enforces it and is imported here, so the page
-// and the behaviour can't drift; the ones below are still waiting for their module (file purge → P3,
-// billing → P4/P5) — MOVE each there when it lands. Change the reality and the constant together. ──
+// and the behaviour can't drift; the ones below are still waiting for their module (billing →
+// P4/P5) — MOVE each there when it lands. Change the reality and the constant together. ──
 /** Trash is permanently deleted after this many days — enforced by the trash.autoPurge job. */
 export { TRASH_RETENTION_DAYS };
+/**
+ * After an account is deleted, its files are removed from object storage within this many days —
+ * enforced by the outbox's sweep of the account's prefix (files.policy.ts).
+ */
+export { DELETION_STORAGE_PURGE_DAYS };
 /** Deadline for actioning an emailed deletion request. In-app deletion closes the account at once. */
 export const DELETION_REQUEST_SLA_DAYS = 30;
-/** After an account is deleted, its files are removed from object storage within this many days. */
-export const DELETION_STORAGE_PURGE_DAYS = 7;
 /** How long deleted rows can still exist in routine encrypted database backups (nightly dumps). */
 export const DELETION_BACKUP_RETENTION_DAYS = 30;
 /** How long operational/server logs (IP + request metadata) are held. */
@@ -198,8 +202,9 @@ export function renderPrivacyPolicy(): string {
     restricted and eventually deleted on the schedule in our <a href="${LEGAL_PATHS.terms}">Terms of
     Service</a>, and we notify you before anything is deleted.</p>
     <p>When your account is deleted, your account details and files are deleted. We keep billing and
-    payment records for up to ${DELETION_BILLING_RETENTION_YEARS} years to meet tax and accounting
-    obligations, operational logs for up to ${DELETION_LOG_RETENTION_DAYS} days, and routine
+    payment records, including the record of how much storage your account used over time, for up
+    to ${DELETION_BILLING_RETENTION_YEARS} years to meet tax and accounting obligations, operational
+    logs for up to ${DELETION_LOG_RETENTION_DAYS} days, and routine
     encrypted database backups for up to ${DELETION_BACKUP_RETENTION_DAYS} days. Our
     <a href="${LEGAL_PATHS.deleteAccount}">Account Deletion</a> page lists exactly what is kept and
     for how long.</p>
@@ -485,7 +490,7 @@ export function renderDeleteAccount(): string {
         preview images &mdash; deleted from our storage provider.</li>
       <li><strong>Your share links</strong>, which stop working immediately.</li>
       <li><strong>Your signed-in devices</strong> and notification tokens.</li>
-      <li><strong>Your usage history</strong> and auto-pay settings.</li>
+      <li><strong>Your auto-pay settings.</strong></li>
     </ul>
 
     <h2>What is kept, and for how long</h2>
@@ -494,8 +499,10 @@ export function renderDeleteAccount(): string {
     <ul>
       <li><strong>Billing and payment records</strong> (up to
         <strong>${DELETION_BILLING_RETENTION_YEARS} years</strong>) &mdash; your statements and
-        payments, and the records our payment providers send us, kept against an internal
-        identifier to meet tax, accounting, and fraud-prevention obligations.</li>
+        payments, the records our payment providers send us, and the record of how much storage
+        your account used over time that your bills were calculated from (amounts and dates, never
+        file names or contents), kept against an internal identifier to meet tax, accounting, and
+        fraud-prevention obligations.</li>
       <li><strong>Operational logs</strong> (up to <strong>${DELETION_LOG_RETENTION_DAYS}
         days</strong>) &mdash; technical records such as IP addresses and request details that we
         use to run and secure the Service. They are deleted automatically after this period.</li>

@@ -29,6 +29,9 @@ This page covers BrimBox's setup on the box and its project-specific steps.
   - **Worker:** the new `brimbox-worker-1` container ran its three daily jobs for that day on start
     (all SUCCEEDED).
   - **Disk:** 20 → 19 GB free.
+- **2026-10-22 — P3 built and checked locally, not yet deployed.** Uploads, downloads, thumbnails,
+  metering's storage log, the outbox and reconciliation. It can deploy before R2 exists: the file
+  endpoints answer `503 STORAGE_NOT_CONFIGURED` until the `R2_*` variables are set.
 
 ## Who does what
 
@@ -50,7 +53,10 @@ access or touches an account. Claude prepares the exact steps for each.
 | P2: migrate, build + start app and worker | Claude, over SSH | done 2026-10-09 |
 | Grow the root EBS volume 20 → 40 GiB (`modify-volume`; irreversible) | human | done 2026-10-09 |
 | Grow partition + ext4 filesystem into it (`growpart`, `resize2fs`; online) | Claude, over SSH | done 2026-10-09 |
-| R2 bucket + scoped API token (Cloudflare dashboard) — needed by P3 | human | pending |
+| R2: enable R2 on the Cloudflare account; buckets `brimbox-files` + `brimbox-files-dev`, a token scoped to each (Cloudflare dashboard) | human | pending |
+| R2 values into the details doc's R2 section | human | pending |
+| R2 values → server `.env` (production bucket) and local `.env` (dev bucket), never displayed | Claude | after the above |
+| P3: migrate, build + start app and worker | Claude, over SSH | pending |
 
 ## The box
 
@@ -233,23 +239,62 @@ Use a Google Cloud project of BrimBox's own, so the sign-in consent screen says 
    (`docker compose -f docker-compose.prod.yml up -d app`). Also publish it in the contract folder: the
    app passes it to Credential Manager.
 
-## Later phases add
+## P3 deploy: uploads and downloads (runbook)
 
-- **P3:** R2 credentials (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`) and
-  the `worker` service.
-- **P4/P5:** FCM, SES and Razorpay credentials.
+A schema change (`Blob`, `UploadSession`, `StorageEvent`, `OutboxJob`, `User.storedBytes`,
+`Node.blobId`/`hasThumbnail`, and an index on `Node.parentId`), so migrate first. Nothing new is
+required in `.env`: without the `R2_*` variables the file endpoints answer 503 and the storage jobs
+skip.
 
-### R2 setup (human, before P3)
+```bash
+cd /opt/apps/brimbox/BrimBox-Backend && git pull
+df -h / && docker system df                               # room for two image builds?
+docker compose -f docker-compose.prod.yml run --rm --build migrate </dev/null
+docker compose -f docker-compose.prod.yml up -d --build app worker </dev/null
+
+# verify
+curl -s https://brimbox.ferbotz.com/config | grep -o '"features":{[^}]*}'   # {"uploads":true}
+curl -s https://brimbox.ferbotz.com/api/v1/uploads -X POST                  # 401 UNAUTHORIZED (route exists)
+docker compose -f docker-compose.prod.yml logs --tail=20 worker             # six jobs listed, two "every N min"
+```
+
+**Turning storage on** (once the R2 values are in the details doc): Claude appends the four `R2_*`
+lines to the server `.env` straight from the doc, without displaying them, then recreates both
+services so they read them: `docker compose -f docker-compose.prod.yml up -d app worker </dev/null`.
+A partial set fails the boot on purpose (`R2 is partly configured…`), so check the logs. End-to-end
+uploads can only be tried once sign-in works (the Google OAuth client); before that, `check:r2-live`
+proves R2 itself from a dev machine against the dev bucket.
+
+### R2 setup (human)
 
 In the Cloudflare account that already hosts `ferbotz.com`:
 
-1. **R2 → Create bucket:** name `brimbox-files`, location hint **Asia-Pacific (APAC)**, Standard class.
-   Leave public access **off**: the bucket is private, and every access is a presigned URL.
-2. **Bucket → Settings → Object lifecycle rules:** abort incomplete multipart uploads after **7 days**.
-3. **R2 → Manage API tokens → Create token:** permission **Object Read & Write**, scoped to
-   `brimbox-files` only.
-4. Put the account ID, access key ID and secret access key in the BrimBox details doc and the
-   credentials registry. Never paste them into chat. Claude adds them to the server `.env` in P3.
+1. **R2 → Purchase/Enable R2** if it isn't on yet. Cloudflare asks for a payment method even for the
+   free tier (10 GB-month of storage and the first millions of operations free; downloads always free).
+2. **R2 → Create bucket:** name `brimbox-files`, location hint **Asia-Pacific (APAC)**, Standard class.
+   Leave public access **off**: no r2.dev URL, no custom domain. Every access is a presigned URL.
+3. **The same again for `brimbox-files-dev`**, used only by `check:r2-live` and local testing, so
+   production data never meets a test.
+4. **Each bucket → Settings → Object lifecycle rules:** check the default rule that expires unfinished
+   multipart uploads after **7 days** is there; new buckets get it. Add it if not.
+5. **R2 → Manage API tokens → Create API token**, twice:
+   - permission **Object Read & Write**, **Apply to specific buckets only** → `brimbox-files`, TTL
+     forever;
+   - the same for `brimbox-files-dev`.
+
+   Each shows an **Access Key ID** and a **Secret Access Key** once. The **Account ID** is on the R2
+   overview page.
+6. Put them in the **R2** section of `G:\My Drive\BrimBox\BrimBox details.md` (production and dev
+   values in their own blocks, as `R2_ACCOUNT_ID=…` lines) and in the HOA credentials registry. Never
+   paste them into chat. Claude moves them from the doc to the server and local `.env` without
+   displaying them.
+
+No CORS rule is needed: the Android app isn't a browser. The share pages (P7) will need one only if
+they fetch files with JavaScript.
+
+## Later phases add
+
+- **P4/P5:** FCM, SES and Razorpay credentials.
 
 ## Standard deploys
 
@@ -257,8 +302,8 @@ Follow protocol 05 (`G:\My Drive\HOA Protocols\05-deployment-runbook.md`):
 
 ```bash
 cd /opt/apps/brimbox/BrimBox-Backend && git pull
-docker compose -f docker-compose.prod.yml up -d --build app
+docker compose -f docker-compose.prod.yml up -d --build app worker </dev/null
 ```
 
 Then verify with the curls above. From P1, a schema change runs the migrate service **first**, always
-with `--build`.
+with `--build`. From P2, rebuild **both** services: they share the image.

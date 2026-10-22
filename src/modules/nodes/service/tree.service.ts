@@ -20,7 +20,7 @@ import {
   numberingPrefixKey,
   parseLimit,
 } from "../nodes.rules";
-import { TreeTx, treeRepository } from "../repository/tree.repository";
+import { treeRepository, UserTx } from "../repository/tree.repository";
 
 export type OnNameConflict = "fail" | "rename";
 
@@ -29,15 +29,15 @@ export interface TreeServiceDeps {
   now: () => Date;
 }
 
-const nameConflict = (): ConflictError =>
+export const nameConflict = (): ConflictError =>
   new ConflictError("Something with this name is already in that folder", "NAME_CONFLICT");
 
 // A node that's gone (purged) is not found; one that exists elsewhere in the tree is the caller's
 // to manage. Someone else's node is not found too — never forbidden (HOA protocol 04).
-const isGone = (node: Node | null): node is null => node === null || node.deletedAt !== null;
+export const isGone = (node: Node | null): node is null => node === null || node.deletedAt !== null;
 
 /** The folder that will contain something: must be the caller's, alive, a folder, and not trashed. */
-const requireLiveFolder = async (tree: TreeTx, parentId: string | null): Promise<void> => {
+export const requireLiveFolder = async (tree: UserTx, parentId: string | null): Promise<void> => {
   if (parentId === null) return;
   const parent = await tree.findOwned(parentId);
   if (isGone(parent)) throw new NotFoundError("Folder not found");
@@ -220,7 +220,8 @@ export class TreeService {
 
   /**
    * Permanently delete a trashed node and everything under it. Only from the trash. Idempotent: a
-   * node already purged answers the same.
+   * node already purged answers the same. The files' bytes stop being billed in the same
+   * transaction, and their objects' deletion is queued (TreeTx.releaseContent).
    */
   async purge(userId: string, id: string): Promise<void> {
     await treeRepository.inUserTransaction(userId, this.deps.now(), async (tree) => {
@@ -228,7 +229,6 @@ export class TreeService {
       if (node === null) throw new NotFoundError("Not found");
       if (node.deletedAt) return;
       if (!node.trashedAt) throw new ConflictError("Move it to the trash first", "NOT_IN_TRASH");
-      // P3 hooks in here: record the freed bytes (StorageEvent) and queue the objects' deletion.
       await tree.purgeSubtree(node.id);
     });
   }
@@ -246,10 +246,9 @@ export class TreeService {
   }
 
   async emptyTrash(userId: string): Promise<{ purged: number }> {
-    return treeRepository.inUserTransaction(userId, this.deps.now(), async (tree) => {
-      // P3 hooks in here too (freed bytes, object deletion).
-      return { purged: await tree.purgeAllTrashed() };
-    });
+    return treeRepository.inUserTransaction(userId, this.deps.now(), async (tree) => ({
+      purged: await tree.purgeAllTrashed(),
+    }));
   }
 
   /** Names containing `q` (case-insensitive), outside the trash, by name. */
@@ -281,7 +280,6 @@ export class TreeService {
       const userIds = await treeRepository.usersWithTrashBefore(cutoff, 100);
       if (userIds.length === 0) break;
       for (const userId of userIds) {
-        // P3 hooks in here too (freed bytes, object deletion).
         nodes += await treeRepository.inUserTransaction(userId, now, (tree) => tree.purgeTrashedBefore(cutoff));
         users += 1;
       }

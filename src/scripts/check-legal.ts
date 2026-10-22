@@ -217,6 +217,11 @@ check("delete-account: states what is kept and for how long", () => {
     ],
     "delete-account"
   );
+  // The storage log bills are computed from outlives the account (anonymised): it must be listed
+  // as kept, never as deleted.
+  const [deleted, kept] = deletion.split("What is kept, and for how long");
+  assert.ok(kept?.includes("how much storage your account used over time"), "the usage record is listed as kept");
+  assert.ok(!deleted?.toLowerCase().includes("usage history"), "and not as deleted");
 });
 
 check("delete-account: covers the final bill, the mandate, and credits", () => {

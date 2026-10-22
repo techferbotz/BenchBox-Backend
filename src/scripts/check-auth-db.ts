@@ -84,6 +84,8 @@ const rejectsWith = async (promise: Promise<unknown>, code: string): Promise<voi
 };
 
 const cleanup = async (): Promise<void> => {
+  // Account deletion queues sweeps of the account's storage (outbox jobs naming its id).
+  for (const id of createdUserIds) await prisma.$executeRaw`DELETE FROM "OutboxJob" WHERE "payload"::text LIKE ${`%${id}%`}`;
   await prisma.user.deleteMany({ where: { id: { in: [...createdUserIds] } } });
   await prisma.$disconnect();
 };

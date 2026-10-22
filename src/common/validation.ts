@@ -72,6 +72,14 @@ export const optionalParentId = (value: unknown, field = "parentId"): string | n
   return requireUuid(value, field);
 };
 
+/** A required whole number ≥ 0 (e.g. a size in bytes). */
+export const requireNonNegativeInt = (value: unknown, field: string): number => {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new BadRequestError(`"${field}" must be a whole number ≥ 0`);
+  }
+  return value;
+};
+
 /** An optional whole number ≥ 0 (e.g. `ifSeq`). */
 export const optionalNonNegativeInt = (value: unknown, field: string): number | undefined => {
   if (value === undefined) return undefined;

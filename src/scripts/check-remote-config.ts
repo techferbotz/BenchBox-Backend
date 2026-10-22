@@ -20,6 +20,7 @@ for (const [key, value] of Object.entries({
 
 import assert from "node:assert/strict";
 import { deepMergeStrict, MergeError } from "../common/deepMerge";
+import { MAX_FILE_SIZE_BYTES, MAX_THUMBNAIL_BYTES } from "../modules/files/files.policy";
 import { ConfigContext, ConfigRule } from "../modules/remoteConfig/dto/remoteConfig.dto";
 import { DEFAULT_REMOTE_CONFIG, TTL_SECONDS } from "../modules/remoteConfig/remoteConfig.defaults";
 import { parseContextHeaders } from "../modules/remoteConfig/remoteConfig.context";
@@ -140,6 +141,23 @@ check("defaults: JSON-clean, day-one values (protocol 10 §1)", () => {
   assert.equal(DEFAULT_REMOTE_CONFIG.maintenance.enabled, false);
 });
 
+check("defaults: the limits the app is told are the ones the server enforces (imported, not retyped)", () => {
+  assert.equal(DEFAULT_REMOTE_CONFIG.limits.maxFileSizeBytes, MAX_FILE_SIZE_BYTES);
+  assert.equal(DEFAULT_REMOTE_CONFIG.limits.maxThumbnailBytes, MAX_THUMBNAIL_BYTES);
+  assert.equal(DEFAULT_REMOTE_CONFIG.features.uploads, true);
+  // An override changes the limit for everyone, and uploads obey the resolved value.
+  const svc = new RemoteConfigService({
+    defaults: DEFAULT_REMOTE_CONFIG,
+    overrides: { limits: { maxFileSizeBytes: 5_000_000_000 } },
+    rules: [],
+  });
+  assert.equal(svc.resolveConfig(anon).limits.maxFileSizeBytes, 5_000_000_000);
+  assert.throws(
+    () => new RemoteConfigService({ defaults: DEFAULT_REMOTE_CONFIG, overrides: { limits: { maxFileSizeBytes: "5GB" } }, rules: [] }),
+    MergeError
+  );
+});
+
 check("defaults: links are absolute https, plus a support address", () => {
   for (const [key, url] of Object.entries(DEFAULT_REMOTE_CONFIG.links)) {
     if (key === "supportEmail") assert.match(url, /^[^@\s]+@[^@\s]+$/);
@@ -182,10 +200,10 @@ check("resolve: a bad override fails at construction (= startup), naming the pat
     () =>
       new RemoteConfigService({
         defaults: DEFAULT_REMOTE_CONFIG,
-        overrides: { features: { uploads: false } }, // no such switch (yet)
+        overrides: { features: { sharing: false } }, // no such switch (yet)
         rules: [],
       }),
-    /REMOTE_CONFIG_OVERRIDES\.features\.uploads: unknown key/
+    /REMOTE_CONFIG_OVERRIDES\.features\.sharing: unknown key/
   );
   assert.throws(
     () =>

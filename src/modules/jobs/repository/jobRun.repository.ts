@@ -6,15 +6,18 @@ import { mayClaim } from "../jobs.schedule";
 // guarantee), so even two workers can never start the same job for the same period.
 
 export class JobRunRepository {
-  /** Claim this job's run for the period. False if it already succeeded, is running, or is cooling off. */
-  async claim(name: string, periodKey: string, now: Date): Promise<boolean> {
+  /**
+   * Claim this job's run for the period. False if it already succeeded (daily) or ran too recently
+   * (interval), is running, or is cooling off after a failure.
+   */
+  async claim(name: string, periodKey: string, now: Date, intervalMs: number | null = null): Promise<boolean> {
     return prisma.$transaction(async (tx) => {
       const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
         SELECT pg_try_advisory_xact_lock(hashtext(${`brimbox-job:${name}`})) AS locked`;
       if (!lock?.locked) return false;
       const key = { name_periodKey: { name, periodKey } };
       const run = await tx.jobRun.findUnique({ where: key });
-      if (!mayClaim(run, now)) return false;
+      if (!mayClaim(run, now, intervalMs)) return false;
       await tx.jobRun.upsert({
         where: key,
         create: { name, periodKey, status: "RUNNING", attempts: 1, startedAt: now },

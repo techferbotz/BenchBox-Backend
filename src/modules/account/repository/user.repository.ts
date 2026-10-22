@@ -1,5 +1,10 @@
 import { Prisma, User } from "@prisma/client";
 import { prisma } from "../../../prisma/client";
+import { lockUserRow } from "../../../prisma/sql";
+import { BlobTx } from "../../files/repository/blob.repository";
+import { MeteringTx } from "../../metering/repository/metering.repository";
+import { OutboxJobInput } from "../../outbox/outbox.jobs";
+import { OutboxTx } from "../../outbox/repository/outbox.repository";
 
 // All User database access. No Prisma outside repositories (HOA protocol 04).
 
@@ -13,6 +18,11 @@ export interface GoogleProfile {
 export class UserRepository {
   async findActiveById(id: string): Promise<User | null> {
     return prisma.user.findFirst({ where: { id, deletedAt: null } });
+  }
+
+  /** Whether an account exists, and whether it was deleted. */
+  async findStatus(id: string): Promise<{ deletedAt: Date | null } | null> {
+    return prisma.user.findUnique({ where: { id }, select: { deletedAt: true } });
   }
 
   /**
@@ -43,20 +53,34 @@ export class UserRepository {
   }
 
   /**
-   * Account deletion, in ONE transaction: sign out every device, delete the whole tree (folder and
-   * file names are personal data; no device needs tombstones once the account is gone), and
-   * anonymise the user. The row itself stays as an anonymous anchor for records the law makes us
-   * keep (statements and payments, from P5); everything that identifies the person is cleared.
+   * Account deletion, in ONE transaction, under the user's row lock:
+   *   - every stored file stops being billed (its blobs are marked purged, recorded through the
+   *     metering choke point) and `cleanupJobs` — the sweep of the account's objects — is queued;
+   *   - every device is signed out;
+   *   - the tree and the upload sessions are deleted (file and folder names are personal data; no
+   *     device needs tombstones once the account is gone);
+   *   - the user is anonymised. The row stays as an anonymous anchor for records the law makes us
+   *     keep (the storage log now; statements and payments from P5).
+   * Returns the bytes released.
    */
-  async anonymiseAndSignOut(userId: string, now: Date): Promise<void> {
-    await prisma.$transaction([
-      prisma.session.deleteMany({ where: { userId } }),
-      prisma.node.deleteMany({ where: { userId } }),
-      prisma.user.update({
-        where: { id: userId },
-        data: { googleSub: null, email: null, name: null, photoUrl: null, deletedAt: now },
-      }),
-    ]);
+  async anonymiseAndSignOut(userId: string, now: Date, cleanupJobs: readonly OutboxJobInput[]): Promise<bigint> {
+    return prisma.$transaction(
+      async (tx) => {
+        await lockUserRow(tx, userId);
+        const freed = await new BlobTx(tx, userId, now).purgeAll();
+        await new MeteringTx(tx, userId, now).recordStorageChange(-freed, "ACCOUNT_DELETE", null);
+        await new OutboxTx(tx).enqueue(cleanupJobs);
+        await tx.session.deleteMany({ where: { userId } });
+        await tx.uploadSession.deleteMany({ where: { userId } });
+        await tx.node.deleteMany({ where: { userId } });
+        await tx.user.update({
+          where: { id: userId },
+          data: { googleSub: null, email: null, name: null, photoUrl: null, deletedAt: now },
+        });
+        return freed;
+      },
+      { maxWait: 10_000, timeout: 60_000 }
+    );
   }
 }
 

@@ -1,4 +1,5 @@
 import { config } from "../../config/env";
+import { MAX_FILE_SIZE_BYTES, MAX_THUMBNAIL_BYTES } from "../files/files.policy";
 import { LEGAL_CONTACT_EMAIL, LEGAL_PATHS } from "../legal/legal.view";
 import { RemoteConfig } from "./dto/remoteConfig.dto";
 
@@ -18,8 +19,14 @@ export const TTL_SECONDS = 60 * 60;
 // container — see docs/REMOTE_CONFIG.md. Per-version / per-user variations belong in
 // remoteConfig.rules.ts, not here.
 export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
-  // No switches yet — each feature adds its own as it ships (P1 sign-in, P3 uploads, P7 sharing).
-  features: {},
+  // One switch per feature as it ships (P7 adds sharing).
+  features: {
+    uploads: true,
+  },
+  limits: {
+    maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
+    maxThumbnailBytes: MAX_THUMBNAIL_BYTES,
+  },
   update: {
     minSupportedBuild: 0,
     recommendedBuild: 0,

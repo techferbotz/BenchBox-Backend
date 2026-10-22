@@ -1,5 +1,6 @@
-// Pure scheduling rules for the worker (deviation D5): when a daily job is due, and whether a run may
-// be claimed. No database, no clock of their own — check:tree pins them.
+// Pure scheduling rules for the worker (deviation D5): when a job is due, and whether a run may be
+// claimed. Daily jobs run once per IST date; interval jobs every N minutes, keeping one JobRun row
+// per IST date. No database, no clock of their own — check:tree and check:storage pin them.
 
 /** Daily jobs run on India time (fixed +05:30, no daylight saving). */
 export const IST_OFFSET_MINUTES = 330;
@@ -39,12 +40,27 @@ export interface RunState {
 export const STALE_RUN_MS = 2 * 60 * 60 * 1000;
 /** A FAILED run is retried after this pause. */
 export const RETRY_AFTER_FAILURE_MS = 15 * 60 * 1000;
+/** An interval job's RUNNING row older than this (or two intervals, if longer) is a crashed run. */
+export const STALE_INTERVAL_RUN_MS = 10 * 60 * 1000;
+/** The scheduler ticks every minute, give or take; an interval job is due this much early, so it never skips a tick. */
+export const TICK_SLACK_MS = 5_000;
 
-/** Whether a worker may start this job's run for the period, given the run recorded so far. */
-export const mayClaim = (run: RunState | null, now: Date): boolean => {
+/**
+ * Whether a worker may start this job's run for the period, given the run recorded so far.
+ * `intervalMs` set: an interval job, whose day's row is claimed again once the interval has
+ * passed since the last start (a failure retries after the interval, or RETRY_AFTER_FAILURE_MS if
+ * that's sooner).
+ */
+export const mayClaim = (run: RunState | null, now: Date, intervalMs: number | null = null): boolean => {
   if (!run) return true;
-  if (run.status === "SUCCEEDED") return false;
-  if (run.status === "RUNNING") return now.getTime() - run.startedAt.getTime() > STALE_RUN_MS;
-  const failedAt = (run.finishedAt ?? run.startedAt).getTime();
-  return now.getTime() - failedAt > RETRY_AFTER_FAILURE_MS;
+  const sinceStart = now.getTime() - run.startedAt.getTime();
+  const sinceEnd = now.getTime() - (run.finishedAt ?? run.startedAt).getTime();
+  if (intervalMs === null) {
+    if (run.status === "SUCCEEDED") return false;
+    if (run.status === "RUNNING") return sinceStart > STALE_RUN_MS;
+    return sinceEnd > RETRY_AFTER_FAILURE_MS;
+  }
+  if (run.status === "RUNNING") return sinceStart > Math.max(STALE_INTERVAL_RUN_MS, 2 * intervalMs);
+  if (run.status === "SUCCEEDED") return sinceStart >= intervalMs - TICK_SLACK_MS;
+  return sinceEnd >= Math.min(RETRY_AFTER_FAILURE_MS, intervalMs) - TICK_SLACK_MS;
 };

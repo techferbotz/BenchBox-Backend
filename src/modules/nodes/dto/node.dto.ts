@@ -11,6 +11,11 @@ export interface NodeDto {
   name: string;
   size: number;
   mimeType: string | null;
+  // Files: changes whenever the content does (a replacing upload) — not on rename or move. The
+  // cache key for the thumbnail and for a downloaded copy. Null for folders.
+  contentId: string | null;
+  // Files: whether GET /api/v1/files/{id}/thumbnail has an image.
+  hasThumbnail: boolean;
   createdAt: string;
   updatedAt: string;
   trashedAt: string | null;
@@ -28,6 +33,8 @@ export const toNodeDto = (node: Node): NodeDto => ({
   name: node.name,
   size: Number(node.size),
   mimeType: node.mimeType,
+  contentId: node.deletedAt ? null : node.blobId,
+  hasThumbnail: node.hasThumbnail,
   createdAt: node.createdAt.toISOString(),
   updatedAt: node.updatedAt.toISOString(),
   trashedAt: node.trashedAt?.toISOString() ?? null,

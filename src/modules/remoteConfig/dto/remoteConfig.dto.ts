@@ -17,8 +17,15 @@ import { DeepPartial } from "../../../common/deepMerge";
 export interface RemoteConfig {
   // Kill switches: client-side gates, true = on, every default true (protocol 10 §1). Turning one
   // off hides the entry point in the app; the API route itself keeps working. BrimBox adds one
-  // switch per feature as that feature ships (each with a BE-nnn entry) — none exist yet.
+  // switch per feature as that feature ships, each with a BE-nnn entry: `uploads` (BE-004).
   features: Record<string, boolean>;
+  // Limits the server enforces, so the app can check before it starts (BE-004). Imported from the
+  // module that enforces each one; uploads obey the RESOLVED value, so an override of one changes
+  // the enforcement and what the app is told together.
+  limits: {
+    maxFileSizeBytes: number;
+    maxThumbnailBytes: number;
+  };
   // App update policy. The client compares its own integer BUILD number (the X-App-Build it
   // sends) — never the display version string, which does not sort reliably. 0 = no requirement.
   update: {

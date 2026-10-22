@@ -4,6 +4,7 @@ import { rateLimit } from "../../common/middleware/rateLimit";
 import {
   deleteMe,
   getMe,
+  getStorage,
   listSessions,
   revokeOtherSessions,
   revokeSession,
@@ -15,6 +16,7 @@ const router = Router();
 router.use(requireAuth);
 
 router.get("/", getMe);
+router.get("/storage", getStorage);
 router.delete(
   "/",
   rateLimit({ name: "delete-account", limit: 10, windowSeconds: 3600, key: (req) => req.userId ?? req.ip ?? "-" }),

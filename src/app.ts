@@ -11,6 +11,7 @@ import authRoutes from "./modules/auth/auth.routes";
 import accountRoutes from "./modules/account/account.routes";
 import { foldersRouter, nodesRouter, searchRouter, trashRouter } from "./modules/nodes/nodes.routes";
 import syncRoutes from "./modules/sync/sync.routes";
+import { filesRouter, uploadsRouter } from "./modules/files/files.routes";
 
 const app = express();
 app.disable("x-powered-by");
@@ -47,6 +48,8 @@ app.use("/api/v1/nodes", nodesRouter);
 app.use("/api/v1/trash", trashRouter);
 app.use("/api/v1/search", searchRouter);
 app.use("/api/v1/sync", syncRoutes);
+app.use("/api/v1/uploads", uploadsRouter);
+app.use("/api/v1/files", filesRouter);
 
 // Unknown route -> standard 404 envelope, produced by the central error handler.
 app.use((req) => {
