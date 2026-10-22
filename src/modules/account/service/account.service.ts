@@ -71,7 +71,7 @@ export class AccountService {
     if (!check.ok) {
       throw check.reason === "mismatch"
         ? new ForbiddenError(
-            "Confirm with the Google account this BrimBox account uses",
+            "Confirm with the Google account this BenchBox account uses",
             "REAUTH_MISMATCH"
           )
         : new ForbiddenError("Confirm with Google again to delete your account", "REAUTH_REQUIRED");

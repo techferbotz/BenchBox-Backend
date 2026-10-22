@@ -1,7 +1,7 @@
 /**
  * Legal page content: privacy policy, terms of service and account deletion (HOA protocol 12).
  *
- * The prose describes BrimBox v1 as designed in docs/BACKEND_PLAN.md: Google sign-in, files in
+ * The prose describes BenchBox v1 as designed in docs/BACKEND_PLAN.md: Google sign-in, files in
  * Cloudflare R2, servers/database/email on AWS, a postpaid monthly bill collected through a
  * Razorpay auto-pay mandate with a user-chosen limit, Google Play credits, Firebase Cloud
  * Messaging for push, and share links. Protocol 12's rule is "only claim what the code does": the
@@ -15,14 +15,14 @@ import { DELETION_STORAGE_PURGE_DAYS } from "../files/files.policy";
 import { TRASH_RETENTION_DAYS } from "../nodes/nodes.policy";
 
 // ── Shared across all documents (edit in one place) ──
-export const LEGAL_APP_NAME = "BrimBox";
-// TODO(legal): confirm the exact legal entity that operates BrimBox.
+export const LEGAL_APP_NAME = "BenchBox";
+// TODO(legal): confirm the exact legal entity that operates BenchBox.
 export const LEGAL_COMPANY = "Ferbotz";
 // TODO(legal): set the real support/privacy inbox (a role inbox is better than a personal one).
 // The app gets this address from GET /config → links.supportEmail; it is defined only here.
 export const LEGAL_CONTACT_EMAIL = "support@ferbotz.com";
 // TODO(legal): India's IT Rules 2021 expect a named Grievance Officer for services that host user
-// content (BrimBox share links). Add the officer's name and contact to the privacy page and terms
+// content (BenchBox share links). Add the officer's name and contact to the privacy page and terms
 // once appointed.
 
 // Route paths, shared with the router and with GET /config → links so neither can drift.
@@ -35,7 +35,7 @@ export const LEGAL_PATHS = {
 // ── Per-document ──
 // Bump on each material change.
 export const PRIVACY_EFFECTIVE_DATE = "October 22, 2026";
-export const TERMS_EFFECTIVE_DATE = "October 1, 2026";
+export const TERMS_EFFECTIVE_DATE = "October 22, 2026";
 export const DELETE_ACCOUNT_EFFECTIVE_DATE = "October 22, 2026";
 // TODO(legal): set the governing jurisdiction (e.g. "India", with the courts of a named city).
 export const TERMS_GOVERNING_LAW = "[your jurisdiction]";

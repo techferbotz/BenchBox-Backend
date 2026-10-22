@@ -14,7 +14,7 @@ import { uploadRepository } from "../repository/upload.repository";
 // multipart uploads nothing is waiting for — and reports everything else for a human:
 //   - accounting drift: User.storedBytes vs its unpurged blobs vs the newest StorageEvent;
 //   - broken links: a live file without content, or content no live file points at;
-//   - unknown objects: keys BrimBox never issued, or owned by no account;
+//   - unknown objects: keys BenchBox never issued, or owned by no account;
 //   - MISSING objects: a live blob whose object isn't in the bucket. That is data loss.
 
 export interface ReconcileServiceDeps {

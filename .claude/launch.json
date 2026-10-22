@@ -2,13 +2,13 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "brimbox-dev",
+      "name": "benchbox-dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 8080
     },
     {
-      "name": "brimbox-dist",
+      "name": "benchbox-dist",
       "runtimeExecutable": "node",
       "runtimeArgs": ["dist/app.js"],
       "port": 8080

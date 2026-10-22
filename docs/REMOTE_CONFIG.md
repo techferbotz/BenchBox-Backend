@@ -1,7 +1,7 @@
 # Remote config — `GET /config`
 
-BrimBox's implementation of HOA protocol 10 (`G:\My Drive\HOA Protocols\10-remote-config-backend.md`).
-The protocol is the source of truth for the contract; this page covers what is specific to BrimBox and
+BenchBox's implementation of HOA protocol 10 (`G:\My Drive\HOA Protocols\10-remote-config-backend.md`).
+The protocol is the source of truth for the contract; this page covers what is specific to BenchBox and
 how to operate it.
 
 ## What it is
@@ -20,7 +20,7 @@ DEFAULT_REMOTE_CONFIG (code)  →  REMOTE_CONFIG_OVERRIDES (env, everyone)  → 
 
 It is pure and synchronous: no database, so it answers even when Postgres is down.
 
-## BrimBox's document
+## BenchBox's document
 
 | Key | Default | Source |
 |---|---|---|
@@ -35,7 +35,7 @@ It is pure and synchronous: no database, so it answers even when Postgres is dow
 
 Planned additions follow protocol 10's "mirrored, never retyped" rule. Each value is imported from the
 module that enforces it:
-- `features.sharing` (P7). There's no sign-in switch: BrimBox can't be used signed out, so
+- `features.sharing` (P7). There's no sign-in switch: BenchBox can't be used signed out, so
   `maintenance` is the lever there.
 - A `billing` section with the limit-alert percentages (P4).
 
@@ -51,11 +51,11 @@ returns it, and the 50-uploads-in-progress cap answers with its own error code.
 around the JSON — then recreate the container:
 
 ```bash
-cd /opt/apps/brimbox/BrimBox-Backend
+cd /opt/apps/benchbox/BenchBox-Backend
 # in .env:
 # REMOTE_CONFIG_OVERRIDES={"maintenance":{"enabled":true,"message":"Back in 10 minutes"}}
 docker compose -f docker-compose.prod.yml up -d app
-curl -s https://brimbox.ferbotz.com/config
+curl -s https://benchbox.ferbotz.com/config
 ```
 
 A key that doesn't exist in the defaults, or a value of the wrong type, **fails startup** with the

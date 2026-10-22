@@ -13,7 +13,7 @@ export class JobRunRepository {
   async claim(name: string, periodKey: string, now: Date, intervalMs: number | null = null): Promise<boolean> {
     return prisma.$transaction(async (tx) => {
       const [lock] = await tx.$queryRaw<{ locked: boolean }[]>`
-        SELECT pg_try_advisory_xact_lock(hashtext(${`brimbox-job:${name}`})) AS locked`;
+        SELECT pg_try_advisory_xact_lock(hashtext(${`benchbox-job:${name}`})) AS locked`;
       if (!lock?.locked) return false;
       const key = { name_periodKey: { name, periodKey } };
       const run = await tx.jobRun.findUnique({ where: key });

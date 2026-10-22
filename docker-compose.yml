@@ -2,7 +2,7 @@
 # Production has no database container — see docker-compose.prod.yml.
 #
 #   docker compose up -d db
-#   DATABASE_URL=postgresql://brimbox:brimbox@localhost:5432/brimbox?schema=public  (in .env)
+#   DATABASE_URL=postgresql://benchbox:benchbox@localhost:5432/benchbox?schema=public  (in .env)
 #   npm run prisma:migrate          # apply / create migrations
 #   npm run dev
 #
@@ -12,15 +12,15 @@ services:
     image: postgres:16
     restart: unless-stopped
     environment:
-      POSTGRES_USER: brimbox
-      POSTGRES_PASSWORD: brimbox
-      POSTGRES_DB: brimbox
+      POSTGRES_USER: benchbox
+      POSTGRES_PASSWORD: benchbox
+      POSTGRES_DB: benchbox
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U brimbox -d brimbox"]
+      test: ["CMD-SHELL", "pg_isready -U benchbox -d benchbox"]
       interval: 5s
       timeout: 5s
       retries: 10

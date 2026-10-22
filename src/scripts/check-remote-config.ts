@@ -11,7 +11,7 @@
 // BEFORE the imports below load env.ts (tsc keeps statement order in CommonJS output). dotenv never
 // overrides a variable that is already set, so these placeholders win over a local .env.
 for (const [key, value] of Object.entries({
-  APP_PUBLIC_URL: "https://brimbox.ferbotz.com",
+  APP_PUBLIC_URL: "https://benchbox.ferbotz.com",
   DATABASE_URL: "postgresql://check:check@localhost:5432/check",
   JWT_SECRET: "check-placeholder-secret-at-least-32-characters",
 })) {

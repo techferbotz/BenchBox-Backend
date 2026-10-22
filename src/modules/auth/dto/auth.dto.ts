@@ -23,6 +23,6 @@ export interface TokenPairResponse {
 
 export interface SignInResponse extends TokenPairResponse {
   user: UserDto;
-  // True the first time this Google account signs in to BrimBox.
+  // True the first time this Google account signs in to BenchBox.
   isNewUser: boolean;
 }

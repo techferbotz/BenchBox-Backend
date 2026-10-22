@@ -21,7 +21,7 @@ if (!["localhost", "127.0.0.1", "[::1]", "::1"].includes(dbHost)) {
   process.exit(1);
 }
 for (const [key, value] of Object.entries({
-  APP_PUBLIC_URL: "https://brimbox.ferbotz.com",
+  APP_PUBLIC_URL: "https://benchbox.ferbotz.com",
   JWT_SECRET: "check-placeholder-secret-at-least-32-characters",
 })) {
   process.env[key] ??= value;

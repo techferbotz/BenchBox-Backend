@@ -1,15 +1,15 @@
 <!--
-  Reference doc — the current contract the BrimBox app builds against.
+  Reference doc — the current contract the BenchBox app builds against.
   Source of truth: the backend repo's docs/FRONTEND_API.md. Mirrored to
-  BrimBox-Contract/backend/API.md whenever a CHANGELOG entry says this file moved.
+  BenchBox-Contract/backend/API.md whenever a CHANGELOG entry says this file moved.
   Last refreshed: 2026-10-22 (BE-004).
 -->
 
-# BrimBox — Frontend (Client) API
+# BenchBox — Frontend (Client) API
 
 Everything the app needs to build its data layer. Examples are JSON and stack-agnostic.
 
-- **Base URL:** `https://brimbox.ferbotz.com`
+- **Base URL:** `https://benchbox.ferbotz.com`
 - **API prefix:** app endpoints live under **`/api/v1`** (§4 onwards). These are unversioned and fixed
   across House of Apps backends: `GET /` (health), `GET /config`, and the legal pages.
 - **Content type:** `application/json` for request bodies. File bytes are never sent to this API
@@ -70,7 +70,7 @@ X-Device-Id: <install uuid>    # stable per-install id
 
 ---
 
-## 2. How BrimBox differs from the other House of Apps backends (plan ahead)
+## 2. How BenchBox differs from the other House of Apps backends (plan ahead)
 
 Each arrives as its own `BE-nnn` entry with the exact contract. They shape the client's architecture,
 so they are listed together here:
@@ -92,7 +92,7 @@ so they are listed together here:
 
 ### `GET /` — health
 
-Plain text `BrimBox Backend Running`. No auth.
+Plain text `BenchBox Backend Running`. No auth.
 
 ### `GET /config` — remote config (HOA protocols 10/11)
 
@@ -120,9 +120,9 @@ start. Launch must never block on it: use compiled-in defaults, then the cached 
       },
       "maintenance": { "enabled": false, "message": null },
       "links": {
-        "privacyPolicy": "https://brimbox.ferbotz.com/privacy",
-        "terms": "https://brimbox.ferbotz.com/terms",
-        "deleteAccount": "https://brimbox.ferbotz.com/delete-account",
+        "privacyPolicy": "https://benchbox.ferbotz.com/privacy",
+        "terms": "https://benchbox.ferbotz.com/terms",
+        "deleteAccount": "https://benchbox.ferbotz.com/delete-account",
         "supportEmail": "support@ferbotz.com"
       }
     }
@@ -165,7 +165,7 @@ followed by a Google account confirmation (§5). If the app's screens end up nam
 
 ### The token model
 
-1. **Sign in with Google** on the device (Credential Manager / "Sign in with Google") using BrimBox's
+1. **Sign in with Google** on the device (Credential Manager / "Sign in with Google") using BenchBox's
    **server client id** — the OAuth *web* client id, published in the contract folder once it exists.
    Until then `POST /api/v1/auth/google` answers `503 SERVICE_UNAVAILABLE`.
 2. Send the resulting **idToken** to `POST /api/v1/auth/google`. You get back:
@@ -344,7 +344,7 @@ Signing in again later with the same Google account creates a **new, empty** acc
 |---|---|---|
 | `BAD_REQUEST` | 400 | `idToken` missing |
 | `REAUTH_REQUIRED` | 403 | The idToken was invalid or older than 10 minutes → run Google sign-in again and retry |
-| `REAUTH_MISMATCH` | 403 | The user picked a different Google account → ask them to choose the one this BrimBox account uses |
+| `REAUTH_MISMATCH` | 403 | The user picked a different Google account → ask them to choose the one this BenchBox account uses |
 | `RATE_LIMITED` | 429 | Too many attempts |
 | `SERVICE_UNAVAILABLE` | 503 | Sign-in isn't configured on the server yet |
 

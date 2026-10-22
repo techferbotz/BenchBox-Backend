@@ -1,6 +1,6 @@
 import { ListedObject, ObjectStore, Page, UploadedPart } from "../../storage/objectStore";
 
-// An in-memory ObjectStore for check:storage-db: R2's behaviour as far as BrimBox relies on it, and
+// An in-memory ObjectStore for check:storage-db: R2's behaviour as far as BenchBox relies on it, and
 // the app's side too — `put` performs what the app does with a presigned URL, refusing a body
 // whose length differs from the signed one, as R2 would.
 

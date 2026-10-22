@@ -1,8 +1,8 @@
-# BrimBox Backend — Implementation Plan
+# BenchBox Backend — Implementation Plan
 
-**Status:** draft for review · **Date:** 2026-10-01 · **Slug:** `brimbox` · **Domain:** `brimbox.ferbotz.com`
+**Status:** draft for review · **Date:** 2026-10-01 · **Slug:** `benchbox` · **Domain:** `benchbox.ferbotz.com`
 
-BrimBox is a pay-as-you-use cloud storage app. Users keep files and folders in the cloud. Each month they
+BenchBox is a pay-as-you-use cloud storage app. Users keep files and folders in the cloud. Each month they
 pay for the storage they actually used, through an auto-debit mandate with a cap they choose. The client
 is Kotlin Multiplatform, launching on Android first.
 
@@ -15,7 +15,7 @@ reason in §2.
 
 | Topic | Decision | Source |
 |---|---|---|
-| Billing model | **Postpaid, capped by a mandate.** The user approves a UPI AutoPay / card mandate with a cap (e.g. ₹100). Each month BrimBox debits the actual usage, up to the cap. The user is alerted as usage nears or passes the cap. | Product decision |
+| Billing model | **Postpaid, capped by a mandate.** The user approves a UPI AutoPay / card mandate with a cap (e.g. ₹100). Each month BenchBox debits the actual usage, up to the cap. The user is alerted as usage nears or passes the cap. | Product decision |
 | Payments | Razorpay recurring payments for the mandate (new vendor). Google Play credit packs via RevenueCat (house pattern), required for Play compliance (§7.6). | §7.6 |
 | File storage | Cloudflare R2: one private bucket, Asia-Pacific location hint. | Product decision |
 | v1 features | Folders, upload/download, trash, search, sync feed, **share links** | Product decision |
@@ -27,8 +27,8 @@ reason in §2.
 | Option | Verdict |
 |---|---|
 | AWS S3 (house default) | Rejected. Download fees (~$0.09/GB) would dominate a pay-as-you-use price. |
-| Google Drive API, every user's files in one BrimBox account | Rejected. Google's terms forbid reselling the service. One account suspension would take every user offline. Hard caps: 750 GB of uploads per account per day, and 500,000 items per shared drive. No signed download links, so every download would have to pass through our server. |
-| Google Drive API, each user's own Drive | Works technically, but the files use storage the user buys from Google, so BrimBox would have nothing to bill for. That is a different product. |
+| Google Drive API, every user's files in one BenchBox account | Rejected. Google's terms forbid reselling the service. One account suspension would take every user offline. Hard caps: 750 GB of uploads per account per day, and 500,000 items per shared drive. No signed download links, so every download would have to pass through our server. |
+| Google Drive API, each user's own Drive | Works technically, but the files use storage the user buys from Google, so BenchBox would have nothing to bill for. That is a different product. |
 | Google Cloud Storage | Built for this (signed URLs, Mumbai region), but like S3 it charges per GB downloaded. |
 | Backblaze B2 | About half R2's storage price, but US/EU regions only. A candidate for a later disaster-recovery copy. |
 | **Cloudflare R2** | **Chosen.** Free downloads, APAC placement, S3 API. Designed for 99.999999999% durability across several data centers, so file bytes need no separate backup. The Postgres database still does (§11). |
@@ -88,9 +88,9 @@ Four rules shape everything else:
 
 **Deviations (protocol 04 asks for a written reason):**
 
-| # | House default | BrimBox | Reason |
+| # | House default | BenchBox | Reason |
 |---|---|---|---|
-| D1 | Access JWT never expires; no refresh tokens | 1-hour access JWT, plus a rotating refresh token for each device (Billanta's `auth.service.ts` pattern). Supports "sign out other devices" and bans. | Protocol 04 itself says to reinstate expiry for payment and sensitive surfaces. BrimBox holds private files and a mandate on the user's bank account. The KMM client's Ktor `Auth` plugin refreshes silently, so users never see a timed logout. |
+| D1 | Access JWT never expires; no refresh tokens | 1-hour access JWT, plus a rotating refresh token for each device (Billanta's `auth.service.ts` pattern). Supports "sign out other devices" and bans. | Protocol 04 itself says to reinstate expiry for payment and sensitive surfaces. BenchBox holds private files and a mandate on the user's bank account. The KMM client's Ktor `Auth` plugin refreshes silently, so users never see a timed logout. |
 | D2 | S3 `<app>-media`, public-read; multer + sharp inside the request; 8 MB cap | R2 private bucket. Presigned direct upload and download, multipart for large files. Originals are stored byte-for-byte. | Files are the product: up to GBs, private, and never re-encoded. Proxying them would saturate the shared box. S3's download fees would dominate a pay-as-you-use price. |
 | D3 | The server makes thumbnails with sharp | The app makes a ≤512 px WebP thumbnail and uploads it alongside the file | Keeps CPU and RAM off the shared box. The phone already decodes HEIF and video. |
 | D4 | The sync cursor and last-write-wins key is the client's `updatedAt` | No client clocks anywhere. The *cursor* is a sequence number the server assigns per user, and changes apply in arrival order. An optional `ifSeq` precondition (409 `NODE_CHANGED`) protects replayed offline edits. Client UUIDs (idempotent by id) and tombstones stay as in protocol 04. | Many changes start on the server: upload completion, trash auto-purge, takedowns. Device clocks drift, so comparing them with server times would silently drop real edits. A server sequence never skips a change. |
@@ -401,7 +401,7 @@ event, −bytes), and its objects go through the outbox. A folder is never repla
     aborted;
   - it reports, as `ALERT` in the job summary and the log: `User.storedBytes` ≠ the sum of unpurged
     blobs ≠ the last `StorageEvent.totalAfter`; a live file without content or content without a file;
-    keys BrimBox never issued; and **missing objects** (a live blob whose object is gone: data loss).
+    keys BenchBox never issued; and **missing objects** (a live blob whose object is gone: data loss).
 
 ### 5.4 Sync feed (for the app's Room cache)
 
@@ -419,7 +419,7 @@ event, −bytes), and its objects go through the outbox. A folder is never repla
 
 ### 5.5 Share links (v1)
 
-- `POST /api/v1/shares { nodeId, expiresIn, allowDownload }` returns `https://brimbox.ferbotz.com/s/<token>`.
+- `POST /api/v1/shares { nodeId, expiresIn, allowDownload }` returns `https://benchbox.ferbotz.com/s/<token>`.
   - The token is 32 random bytes, and only its sha256 is stored (Momentica's opaque-token rule).
   - Links expire after 7 days by default. The owner can revoke them, and admins can disable them.
 - The public routes are mounted at root and need no auth:
@@ -601,7 +601,7 @@ lengths are constants that the legal pages quote (protocol 12).
 
 ### 7.8 GST and invoices
 
-Statements show GST. If BrimBox is GST-registered, it issues tax invoices. The place of supply needs the
+Statements show GST. If BenchBox is GST-registered, it issues tax invoices. The place of supply needs the
 user's state, collected at mandate setup. The CGST/SGST vs IGST split is worked out at display time
 (Billanta's `MONEY.md`). **Confirm the treatment with a CA before launch.**
 
@@ -693,18 +693,18 @@ backup runs from the host cron, not the worker (§11).
 ## 11. Infrastructure, deploy and backups
 
 - **Following protocols 03 and 05:**
-  - Compose project `name: brimbox`, with `app` on `127.0.0.1:8094`. Ports 8080 and 8090–8093 are taken;
+  - Compose project `name: benchbox`, with `app` on `127.0.0.1:8094`. Ports 8080 and 8090–8093 are taken;
     re-check on the box.
   - Services: `app`, `worker` (same image, `node dist/worker.js`), and `migrate` under the `tools` profile.
-  - A `brimbox` database and role on the host Postgres.
-  - An nginx vhost and a certbot certificate for `brimbox.ferbotz.com`.
-- **R2:** bucket `brimbox-files` with the APAC location hint, private, with the default lifecycle rule
+  - A `benchbox` database and role on the host Postgres.
+  - An nginx vhost and a certbot certificate for `benchbox.ferbotz.com`.
+- **R2:** bucket `benchbox-files` with the APAC location hint, private, with the default lifecycle rule
   that expires unfinished multipart uploads after 7 days (new buckets get it; check it's there). A
-  second bucket, `brimbox-files-dev`, with its own token, for `check:r2-live` from a dev machine.
-- **Box capacity:** BrimBox would be the **5th app** on the t3.micro (~1 GB RAM). Momentica's `DEPLOY.md`
+  second bucket, `benchbox-files-dev`, with its own token, for `check:r2-live` from a dev machine.
+- **Box capacity:** BenchBox would be the **5th app** on the t3.micro (~1 GB RAM). Momentica's `DEPLOY.md`
   says to move to a larger instance at that point. Resize to at least a t3.small before launch. That needs a
   stop/start of the shared box, so it is your call.
-- **Backups:** protocol 08 isn't written yet, but BrimBox can't launch without backups. Object keys are
+- **Backups:** protocol 08 isn't written yet, but BenchBox can't launch without backups. Object keys are
   opaque, so **losing the database would lose every user's file tree**. The plan:
   - a nightly `pg_dump` to a private bucket, kept for 30 days
   - a restore test every month
@@ -727,7 +727,7 @@ backup runs from the host cron, not the worker (§11).
 
 | Phase | Scope | Exit criteria |
 |---|---|---|
-| **P0 Foundations** | Protocol 00 setup: Drive folder, contract folder, docs mirror; the details doc and credentials registry entries are written at first deploy, when there are secrets to record. Scaffold per protocol 04, `/config`, legal pages, health, Docker/compose, `CLAUDE.md`. DNS, vhost, TLS. The R2 bucket is created by you, ready for P3. | `https://brimbox.ferbotz.com` serves health, `/config` and the legal pages. Contract folder bootstrapped. |
+| **P0 Foundations** | Protocol 00 setup: Drive folder, contract folder, docs mirror; the details doc and credentials registry entries are written at first deploy, when there are secrets to record. Scaffold per protocol 04, `/config`, legal pages, health, Docker/compose, `CLAUDE.md`. DNS, vhost, TLS. The R2 bucket is created by you, ready for P3. | `https://benchbox.ferbotz.com` serves health, `/config` and the legal pages. Contract folder bootstrapped. |
 | **P1 Accounts** | Database and role on the host Postgres, Prisma and the `migrate` service (moved here from P0 because nothing reads a database before P1). Google sign-in, access + refresh sessions (D1), session list/revoke, push-token registration, account-deletion skeleton. | `check:auth` (pure) and `check:auth-db` (local database) pass: rotation, the lost-response retry window, reuse detection, idle expiry, revoke-others, re-auth for deletion. **Built, checked and deployed 2026-10-01** (sign-in waits on the Google OAuth client). |
 | **P2 Tree + sync** | Folders and files metadata, rename/move, trash/restore/purge, search, sync feed, plus the worker (D5) with trash auto-purge, tombstone compaction and expired-session cleanup | `check:tree` (pure) and `check:tree-db` (local database) pass: cycles, name conflicts, restore clashes, `ifSeq`, feed ordering and ties, compaction → resync, auto-purge, concurrency, job claims. **Built, checked and deployed 2026-10-09.** |
 | **P3 Data plane** | Upload sessions (single + multipart, resume), complete + verify, thumbnails, downloads, outbox deletes, sweeper, reconciliation, `StorageEvent` choke point | A 5 GB upload survives network drops and an app kill. `check:storage` invariants hold. **Built and checked 2026-10-22** (`check:storage` 13, `check:storage-db` 22: resume, crash recovery, races, purge, the outbox, reconciliation, 20,000-file scale). Live R2 behaviour is `check:r2-live`, run once the dev bucket exists; the deploy waits on the R2 bucket and token. |
@@ -754,7 +754,7 @@ real users needs P5 **and** P6.
 5. **Minimum debit:** ₹10. Smaller totals carry into next month.
 6. **Business setup before P5 goes live:** legal entity, GST registration, Razorpay recurring activation.
 7. **Play side before P6:** credit pack sizes and user choice billing enrollment.
-8. **Shared box:** resize the t3.micro or give BrimBox its own instance.
+8. **Shared box:** resize the t3.micro or give BenchBox its own instance.
 9. **Max file size in v1:** 10 GB, set through `/config`.
 
 ---

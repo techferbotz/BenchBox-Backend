@@ -4,7 +4,7 @@
 //   npm run check:r2-live        (R2_* in .env pointing at the dev bucket)
 //
 //   - a presigned PUT works, and a body of a different length than signed is refused;
-//   - a presigned GET answers with the name and type BrimBox asks for, and serves ranges;
+//   - a presigned GET answers with the name and type BenchBox asks for, and serves ranges;
 //   - multipart: parts, ListParts, completion, abort;
 //   - listing and batch delete.
 // Everything it creates lives under one random u/<uuid>/ prefix and is deleted at the end.
@@ -13,7 +13,7 @@ import dotenv from "dotenv";
 dotenv.config({ quiet: true });
 
 for (const [key, value] of Object.entries({
-  APP_PUBLIC_URL: "https://brimbox.ferbotz.com",
+  APP_PUBLIC_URL: "https://benchbox.ferbotz.com",
   DATABASE_URL: "postgresql://check:check@localhost:5432/check",
   JWT_SECRET: "check-placeholder-secret-at-least-32-characters",
 })) {

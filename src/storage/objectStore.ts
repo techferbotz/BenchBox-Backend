@@ -1,4 +1,4 @@
-// What BrimBox needs from object storage (deviation D2). The one implementation is r2Storage.ts,
+// What BenchBox needs from object storage (deviation D2). The one implementation is r2Storage.ts,
 // the sole importer of the AWS SDK; services take an ObjectStore as a constructor dependency, which
 // is how check:storage-db runs them against an in-memory store with no network.
 //

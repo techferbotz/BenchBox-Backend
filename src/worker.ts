@@ -7,10 +7,10 @@ import { disconnectDatabase } from "./prisma/client";
 // jobs. The API process never runs jobs.
 
 const scheduler = startScheduler(JOBS);
-console.log(`BrimBox worker started: ${JOBS.map((job) => `${job.name} ${describeSchedule(job)}`).join(", ")}`);
+console.log(`BenchBox worker started: ${JOBS.map((job) => `${job.name} ${describeSchedule(job)}`).join(", ")}`);
 
 const shutdown = (signal: string): void => {
-  console.log(`BrimBox worker stopping (${signal})`);
+  console.log(`BenchBox worker stopping (${signal})`);
   scheduler.stop();
   // A job interrupted here stays RUNNING and is claimed again once stale; every job is idempotent.
   void disconnectDatabase().finally(() => process.exit(0));

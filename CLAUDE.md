@@ -1,27 +1,31 @@
-# BrimBox Backend
+# BenchBox Backend
 
-Backend for **BrimBox**, a pay-as-you-use cloud storage app. Users keep files and folders in the cloud
+Backend for **BenchBox**, a pay-as-you-use cloud storage app. Users keep files and folders in the cloud
 and pay each month for the storage they actually used: a monthly bill collected through a UPI AutoPay /
 card mandate with a limit the user chooses, with Google Play credits alongside. The client is a Kotlin
 Multiplatform app, **Android first**, iOS later.
 
 **The design is in [`docs/BACKEND_PLAN.md`](docs/BACKEND_PLAN.md)** — architecture, data model, metering,
-billing, and the phased roadmap (§12). Read it before building a phase. **P0 (foundations) is live at
-`https://brimbox.ferbotz.com` since 2026-10-01. P1 (accounts: Google sign-in, device sessions, account
-deletion) and P2 (file tree, trash, search, sync feed, worker) are deployed too; sign-in answers 503
-until the Google OAuth client exists. P3 (uploads, downloads, thumbnails, the storage log, the outbox,
-reconciliation) is built and checked locally (2026-10-22), not yet deployed; its file endpoints answer
-503 until the R2 bucket and token exist. Next: P4 (metering, statements, FCM + SES).** Deploy facts:
-`docs/DEPLOY.md`.
+billing, and the phased roadmap (§12). Read it before building a phase. **P0 (foundations) has been live
+since 2026-10-01. P1 (accounts: Google sign-in, device sessions, account deletion) and P2 (file tree,
+trash, search, sync feed, worker) are deployed too; sign-in answers 503 until the Google OAuth client
+exists. P3 (uploads, downloads, thumbnails, the storage log, the outbox, reconciliation) is built and
+checked locally (2026-10-22), not yet deployed; its file endpoints answer 503 until the R2 bucket and
+token exist. Next: P4 (metering, statements, FCM + SES).** Deploy facts: `docs/DEPLOY.md`.
+
+**Renamed from BrimBox (decided 2026-10-22).** The code and docs use BenchBox / `benchbox` throughout.
+Until the rename switch in `docs/DEPLOY.md` is done, the server still answers at
+`https://brimbox.ferbotz.com` under the old names (Compose project, paths, database and role); after
+it, at `https://benchbox.ferbotz.com`.
 
 ## House of Apps protocols
 
 This project follows the shared HOA playbook in `G:\My Drive\HOA Protocols\`. Read `README.md` there
 first; it indexes the rest. The ones that bind this repo:
 
-- **00 — New project setup**: Drive folder `G:\My Drive\BrimBox\`, details doc, credentials registry,
+- **00 — New project setup**: Drive folder `G:\My Drive\BenchBox\`, details doc, credentials registry,
   docs mirror, contract folder.
-- **01 — Server ↔ client contract**: `G:\My Drive\BrimBox\BrimBox-Contract\` is the **only** channel to
+- **01 — Server ↔ client contract**: `G:\My Drive\BenchBox\BenchBox-Contract\` is the **only** channel to
   the app. Write only in `backend/`; read `app/REQUESTS.md` past the watermark in `backend/applied.md`;
   log every app-observable change as a `BE-nnn` entry in `backend/CHANGELOG.md`. **Never read or clone
   the app's repository.** `backend/API.md` mirrors `docs/FRONTEND_API.md` — refresh it in the same change.
@@ -42,7 +46,7 @@ Full reasons in `docs/BACKEND_PLAN.md` §2.
 
 - **D1 — Tokens expire.** 1-hour access JWT + a rotating refresh token per device (Billanta's pattern),
   not the house's permanent token. Protocol 04 itself says to reinstate expiry for payment/sensitive
-  surfaces: BrimBox holds private files and a mandate on the user's bank account. (Lands in P1.)
+  surfaces: BenchBox holds private files and a mandate on the user's bank account. (Lands in P1.)
 - **D2 — Files never touch this server.** Cloudflare R2, private bucket, presigned direct upload/download,
   multipart for large files, originals stored byte-exact. No multer, no sharp in the request path, no
   public-read objects.
@@ -79,13 +83,13 @@ Local env: copy `.env.example` to `.env`. Variables are read **only** in `src/co
 | Variable | Required | Meaning |
 |---|---|---|
 | `PORT` | no (8080) | Listen port; 8080 inside the container |
-| `APP_PUBLIC_URL` | yes | Public origin, e.g. `https://brimbox.ferbotz.com` — legal links in `/config` are built from it |
+| `APP_PUBLIC_URL` | yes | Public origin, e.g. `https://benchbox.ferbotz.com` — legal links in `/config` are built from it |
 | `DATABASE_URL` | yes | PostgreSQL; production reaches the host Postgres as `host.docker.internal` |
 | `JWT_SECRET` | yes (≥ 32 chars) | Signs access tokens. Rotating it does **not** sign users out (apps refresh) |
 | `JWT_EXPIRES_IN` | no (`1h`) | Access-token lifetime, 1m–24h; `never` is refused (D1) |
 | `GOOGLE_CLIENT_ID` | no | OAuth **web** client id(s), comma-separated; unset → sign-in answers 503 |
 | `REMOTE_CONFIG_OVERRIDES` | no | JSON patch over the default `/config` document; a bad patch fails startup |
-| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | all or none | Cloudflare R2. None → file endpoints answer 503 and storage jobs skip; a partial set fails startup. Production: `brimbox-files`; local: `brimbox-files-dev` |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | all or none | Cloudflare R2. None → file endpoints answer 503 and storage jobs skip; a partial set fails startup. Production: `benchbox-files`; local: `benchbox-files-dev` |
 | `R2_ENDPOINT` | no | Override the S3 endpoint (a local S3-compatible stand-in); production leaves it unset |
 | `APP_HOST_PORT` | prod only | Loopback port compose publishes on the box (8094) |
 

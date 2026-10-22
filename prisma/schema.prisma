@@ -1,4 +1,4 @@
-// BrimBox schema. Prisma 6 is pinned on purpose (HOA protocol 04): v7 drops `url = env(...)` and
+// BenchBox schema. Prisma 6 is pinned on purpose (HOA protocol 04): v7 drops `url = env(...)` and
 // needs a driver adapter. Every Prisma call lives in a repository — no Prisma anywhere else.
 // Migrations are a discrete step (`migrate` compose service), never run on container start.
 
@@ -11,7 +11,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// A BrimBox account. Users sign in with Google; the identity is Google's stable `sub`, never the
+/// A BenchBox account. Users sign in with Google; the identity is Google's stable `sub`, never the
 /// email (which can change).
 model User {
   id          String    @id @default(uuid()) @db.Uuid

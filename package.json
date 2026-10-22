@@ -1,8 +1,8 @@
 {
-  "name": "brimbox-backend",
+  "name": "benchbox-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "Backend for BrimBox — pay-as-you-use cloud storage",
+  "description": "Backend for BenchBox — pay-as-you-use cloud storage",
   "license": "UNLICENSED",
   "main": "dist/app.js",
   "engines": {

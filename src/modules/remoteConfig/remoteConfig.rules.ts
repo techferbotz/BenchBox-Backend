@@ -18,5 +18,5 @@ import { ConfigRule } from "./dto/remoteConfig.dto";
 // validated against the defaults at startup. Rules must be pure and fast: this runs on every
 // app launch and MUST NOT hit the database. (A DB-backed rule set is a future step — load the
 // rows into this array on startup / on an interval, never per request.)
-// (Verbatim from HOA protocol 10's reference implementation, with BrimBox examples.)
+// (Verbatim from HOA protocol 10's reference implementation, with BenchBox examples.)
 export const RULES: ConfigRule[] = [];

@@ -15,7 +15,7 @@ const requireEnv = (key: string): string => {
   return value.trim();
 };
 
-// An absolute http(s) origin with no path, query or trailing slash — e.g. https://brimbox.ferbotz.com.
+// An absolute http(s) origin with no path, query or trailing slash — e.g. https://benchbox.ferbotz.com.
 // Links are built as `${origin}/privacy`, so anything else would produce broken URLs.
 const requireOrigin = (key: string): string => {
   const raw = requireEnv(key);
@@ -28,7 +28,7 @@ const requireOrigin = (key: string): string => {
   const isHttp = url.protocol === "https:" || url.protocol === "http:";
   if (!isHttp || url.pathname !== "/" || url.search || url.hash || raw.endsWith("/")) {
     throw new Error(
-      `Environment variable ${key} must be an origin like https://brimbox.ferbotz.com — ` +
+      `Environment variable ${key} must be an origin like https://benchbox.ferbotz.com — ` +
         `http(s), no path, no trailing slash (got "${raw}")`
     );
   }
@@ -63,7 +63,7 @@ const parseList = (key: string): string[] =>
     .filter((item) => item.length > 0);
 
 // How long an access token lives, in seconds. HOA protocol 04 defaults JWT_EXPIRES_IN to "never";
-// BrimBox deviates (D1 in docs/BACKEND_PLAN.md): access tokens always expire — the app refreshes
+// BenchBox deviates (D1 in docs/BACKEND_PLAN.md): access tokens always expire — the app refreshes
 // them silently with its refresh token — so "never" is refused rather than quietly honoured.
 const ACCESS_TOKEN_TTL_MIN_SECONDS = 60;
 const ACCESS_TOKEN_TTL_MAX_SECONDS = 24 * 60 * 60;
@@ -71,7 +71,7 @@ const parseAccessTokenTtl = (key: string, fallback: string): number => {
   const raw = (process.env[key] ?? "").trim() || fallback;
   if (raw.toLowerCase() === "never") {
     throw new Error(
-      `${key}=never is not supported in BrimBox: access tokens must expire (refresh tokens keep ` +
+      `${key}=never is not supported in BenchBox: access tokens must expire (refresh tokens keep ` +
         `users signed in). Use a duration such as "1h".`
     );
   }
@@ -132,7 +132,7 @@ const parseR2Config = (): R2Config | null => {
   }
   const bucket = requireEnv("R2_BUCKET");
   if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket)) {
-    throw new Error(`R2_BUCKET must be an R2 bucket name, like brimbox-files (got "${bucket}")`);
+    throw new Error(`R2_BUCKET must be an R2 bucket name, like benchbox-files (got "${bucket}")`);
   }
   // Optional: another S3-compatible endpoint, for a local stand-in. Production leaves it unset.
   const override = (process.env.R2_ENDPOINT ?? "").trim();

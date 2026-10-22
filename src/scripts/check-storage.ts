@@ -9,7 +9,7 @@
 // config/env.ts fails fast on missing REQUIRED vars: placeholders for any that are missing, set
 // BEFORE the imports below load it (tsc keeps statement order in CommonJS output).
 for (const [key, value] of Object.entries({
-  APP_PUBLIC_URL: "https://brimbox.ferbotz.com",
+  APP_PUBLIC_URL: "https://benchbox.ferbotz.com",
   DATABASE_URL: "postgresql://check:check@localhost:5432/check",
   JWT_SECRET: "check-placeholder-secret-at-least-32-characters",
 })) {
@@ -253,13 +253,13 @@ const main = async (): Promise<void> => {
   await check("R2 URLs: uploads sign Content-Length and carry no checksum; downloads carry the name and type", async () => {
     const store = createR2Store({
       endpoint: "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
-      bucket: "brimbox-files",
+      bucket: "benchbox-files",
       accessKeyId: "a".repeat(32),
       secretAccessKey: "b".repeat(64),
     });
     const key = objectKeyFor(USER, BLOB);
     const put = new URL(await store.presignPut(key, 12345, 3600));
-    assert.equal(put.origin + put.pathname, `https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/brimbox-files/${key}`);
+    assert.equal(put.origin + put.pathname, `https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/benchbox-files/${key}`);
     assert.equal(put.searchParams.get("X-Amz-SignedHeaders"), "content-length;host");
     assert.equal(put.searchParams.get("X-Amz-Expires"), "3600");
     const part = new URL(await store.presignUploadPart(key, "UPLOAD", 7, 8 * MiB, 600));

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------------------------------------------------------------------------
-# BrimBox backend — multi-stage build (HOA protocol 04), run on the shared EC2 box.
+# BenchBox backend — multi-stage build (HOA protocol 04), run on the shared EC2 box.
 #
 #   builder : install ALL deps, generate the Prisma client, compile TS -> dist/
 #             (also the image the `migrate` service runs: the Prisma CLI is a dev dependency)

@@ -8,7 +8,7 @@ export interface SuccessResponse<T> {
 
 export interface ErrorResponse {
   success: false;
-  // Stable, machine-readable code (e.g. NOT_FOUND, INVALID_JSON). Always present in BrimBox.
+  // Stable, machine-readable code (e.g. NOT_FOUND, INVALID_JSON). Always present in BenchBox.
   code: string;
   message: string;
 }

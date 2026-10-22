@@ -2,13 +2,13 @@
 # projects. PostgreSQL runs as a host service on the box, not in this stack.
 #
 # Isolation:
-#   - `name: brimbox` -> containers/networks are `brimbox_*`; nothing collides with other apps.
+#   - `name: benchbox` -> containers/networks are `benchbox_*`; nothing collides with other apps.
 #   - The app publishes ONLY on 127.0.0.1 -> reachable by host nginx, never from the internet.
 #
 # Usage (full runbook: docs/DEPLOY.md). With a schema change, migrate FIRST, always with --build:
 #   docker compose -f docker-compose.prod.yml run --rm --build migrate
 #   docker compose -f docker-compose.prod.yml up -d --build app worker
-name: brimbox
+name: benchbox
 
 services:
   app:

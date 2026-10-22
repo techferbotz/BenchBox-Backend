@@ -30,7 +30,7 @@ app.use(optionalDevice);
 
 // Health check — the text protocol 05's deploy verification curls for.
 app.get("/", (_req, res) => {
-  res.type("text").send("BrimBox Backend Running");
+  res.type("text").send("BenchBox Backend Running");
 });
 
 // Public legal pages for the store listings and the app's own links (HOA protocol 12).
@@ -60,5 +60,5 @@ app.use((req) => {
 app.use(errorHandler);
 
 app.listen(config.port, () => {
-  console.log(`BrimBox backend listening on port ${config.port}`);
+  console.log(`BenchBox backend listening on port ${config.port}`);
 });

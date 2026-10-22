@@ -30,7 +30,7 @@ const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const OBJECT_KEY = new RegExp(`^u/(${UUID})/(${UUID})$`);
 const THUMB_KEY = new RegExp(`^t/(${UUID})/(${UUID})\\.webp$`);
 
-/** What a key in the bucket is, or null for a key BrimBox never issues. */
+/** What a key in the bucket is, or null for a key BenchBox never issues. */
 export const parseObjectKey = (key: string): { kind: "object" | "thumb"; userId: string; blobId: string } | null => {
   const object = OBJECT_KEY.exec(key);
   if (object) return { kind: "object", userId: object[1]!, blobId: object[2]! };

@@ -1,6 +1,6 @@
 // Base class for all expected/operational errors. Carries the HTTP status and a stable,
 // machine-readable `code` that the error handler turns into the failure envelope
-// { success: false, code, message }. BrimBox always sends a code: the app branches on it,
+// { success: false, code, message }. BenchBox always sends a code: the app branches on it,
 // never on the human-readable message.
 export class AppError extends Error {
   public readonly statusCode: number;
