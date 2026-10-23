@@ -7,16 +7,16 @@ Multiplatform app, **Android first**, iOS later.
 
 **The design is in [`docs/BACKEND_PLAN.md`](docs/BACKEND_PLAN.md)** — architecture, data model, metering,
 billing, and the phased roadmap (§12). Read it before building a phase. **P0 (foundations) has been live
-since 2026-10-01. P1 (accounts: Google sign-in, device sessions, account deletion) and P2 (file tree,
-trash, search, sync feed, worker) are deployed too; sign-in answers 503 until the Google OAuth client
-exists. P3 (uploads, downloads, thumbnails, the storage log, the outbox, reconciliation) is built and
-checked locally (2026-10-22), not yet deployed; its file endpoints answer 503 until the R2 bucket and
-token exist. Next: P4 (metering, statements, FCM + SES).** Deploy facts: `docs/DEPLOY.md`.
+since 2026-10-01. P1 (accounts: Google sign-in, device sessions, account deletion), P2 (file tree,
+trash, search, sync feed, worker) and P3 (uploads, downloads, thumbnails, the storage log, the outbox,
+reconciliation; deployed 2026-10-23) are live at `https://benchbox.ferbotz.com`. Sign-in answers 503
+until the Google OAuth client exists (it waits on the app's package name and SHA-1s), and the file
+endpoints answer 503 until the R2 buckets and tokens exist. Next: P4 (metering, statements, FCM +
+SES).** Deploy facts: `docs/DEPLOY.md`.
 
-**Renamed from BrimBox (decided 2026-10-22).** The code and docs use BenchBox / `benchbox` throughout.
-Until the rename switch in `docs/DEPLOY.md` is done, the server still answers at
-`https://brimbox.ferbotz.com` under the old names (Compose project, paths, database and role); after
-it, at `https://benchbox.ferbotz.com`.
+**Renamed from BrimBox on 2026-10-22; the box switched over on 2026-10-23.** Everything — code, docs,
+domain, Compose project, checkout path, database and role, GitHub repo, Drive folders — uses BenchBox /
+`benchbox`. Commits before 2026-10-22 say BrimBox.
 
 ## House of Apps protocols
 

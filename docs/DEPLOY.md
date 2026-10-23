@@ -15,15 +15,15 @@ This page covers BenchBox's setup on the box and its project-specific steps.
 
 ## Status
 
-> **Renamed BrimBox → BenchBox (decided 2026-10-22).** This page uses the new names throughout.
-> Until the [rename switch](#rename-switch-brimbox--benchbox-runbook) below is done, the box still runs
-> the old ones: `brimbox.ferbotz.com`, Compose project `brimbox`, `/opt/apps/brimbox/BrimBox-Backend`,
-> database and role `brimbox`, repo `techferbotz/BrimBox-Backend`. Everything dated before the switch
-> happened under those old names.
+> **Renamed BrimBox → BenchBox (decided 2026-10-22, switched on the box 2026-10-23).** This page uses
+> the new names throughout. Everything dated before 2026-10-23 happened under the old ones:
+> `brimbox.ferbotz.com`, Compose project `brimbox`, `/opt/apps/brimbox/BrimBox-Backend`, database and
+> role `brimbox`, repo `techferbotz/BrimBox-Backend`. See the
+> [rename switch](#rename-switch-brimbox--benchbox-done-2026-10-23) for what was run.
 
-- **2026-10-01 — P0 live at `https://benchbox.ferbotz.com`** (commit `3cb36e1`): `/`, `/config` and the
-  legal pages. Plain HTTP redirects to HTTPS. The Let's Encrypt certificate expires 2026-12-30 and renews
-  automatically (`certbot.timer`; a renewal dry run passed).
+- **2026-10-01 — P0 live** (commit `3cb36e1`): `/`, `/config` and the legal pages. Plain HTTP redirects
+  to HTTPS. The current certificate (`benchbox.ferbotz.com`, issued 2026-10-23) expires 2027-01-21 and
+  renews automatically (`certbot.timer`; a renewal dry run passed).
 - **2026-10-01 — P1 deployed** (commit `06555bd`).
   - **Database:** `benchbox` (owned by role `benchbox`) on the host PostgreSQL 18.6, with migration
     `20261001094719_init_accounts` applied.
@@ -35,9 +35,14 @@ This page covers BenchBox's setup on the box and its project-specific steps.
   - **Worker:** the new `benchbox-worker-1` container ran its three daily jobs for that day on start
     (all SUCCEEDED).
   - **Disk:** 20 → 19 GB free.
-- **2026-10-22 — P3 built and checked locally, not yet deployed.** Uploads, downloads, thumbnails,
-  metering's storage log, the outbox and reconciliation. It can deploy before R2 exists: the file
-  endpoints answer `503 STORAGE_NOT_CONFIGURED` until the `R2_*` variables are set.
+- **2026-10-23 — P3 deployed with the rename switch** (commit `8f1eb8c`). Uploads, downloads,
+  thumbnails, metering's storage log, the outbox and reconciliation.
+  - **Migration:** `20261022053023_uploads_storage`.
+  - **Endpoints:** `/api/v1/uploads` and `/api/v1/files` are live behind sign-in. The file endpoints
+    answer `503 STORAGE_NOT_CONFIGURED` until the `R2_*` variables are set.
+  - **Worker:** six jobs (two every N minutes); all of that day's runs SUCCEEDED, and reconciliation
+    reported "bucket: not checked (storage not configured)".
+  - **Disk:** 13 GB free after the builds and removing the three old `brimbox-*` images.
 
 ## Who does what
 
@@ -62,13 +67,13 @@ access or touches an account. Claude prepares the exact steps for each.
 | R2: enable R2 on the Cloudflare account; buckets `benchbox-files` + `benchbox-files-dev`, a token scoped to each (Cloudflare dashboard) | human | pending |
 | R2 values into the details doc's R2 section | human | pending |
 | R2 values → server `.env` (production bucket) and local `.env` (dev bucket), never displayed | Claude | after the above |
-| Rename: DNS A record `benchbox` → `13.205.128.80`, DNS only (Cloudflare dashboard) | human | pending |
-| Rename: GitHub repo `BrimBox-Backend` → `BenchBox-Backend` | human (or Claude with `gh`) | pending |
-| Rename: the credentials registry's entry | human | pending |
+| Rename: DNS A record `brimbox` renamed to `benchbox` → `13.205.128.80`, DNS only (Cloudflare dashboard); the old name no longer resolves | human | done 2026-10-23 |
+| Rename: GitHub repo `BrimBox-Backend` → `BenchBox-Backend` | human | done 2026-10-23 |
+| Rename: the credentials registry's entry | — | not needed: the registry never got an entry (last edited 2026-09-23); see the "Secret values" row above |
 | Rename: Drive folder, details doc, contract folder; BE-005; protocol 03 | Claude | done 2026-10-23 |
 | Google OAuth Android client: the app's package name + debug/release SHA-1 (an `APP-nnn` request) | app side, then human | waits on the app project |
-| Rename switch on the box, with the P3 deploy (runbook below) | Claude, over SSH | pending |
-| Old domain: redirect until 2026-12-30, then remove its cert and site; delete the `brimbox` DNS record | Claude, then human | after the switch |
+| Rename switch on the box, with the P3 deploy (runbook below) | Claude, over SSH | done 2026-10-23 |
+| Old domain: its DNS record was renamed, so no redirect; old nginx site and certificate removed, old images removed | Claude | done 2026-10-23 |
 
 ## The box
 
@@ -251,54 +256,59 @@ Use a Google Cloud project of BenchBox's own, so the sign-in consent screen says
    (`docker compose -f docker-compose.prod.yml up -d app`). Also publish it in the contract folder: the
    app passes it to Credential Manager.
 
-## Rename switch: BrimBox → BenchBox (runbook)
+## Rename switch: BrimBox → BenchBox (done 2026-10-23)
 
-Done once, with the P3 deploy riding along. About ten minutes of downtime, between stopping the old
-stack and starting the new one.
-
-**Before:** the `benchbox` DNS record resolves to the box, the GitHub repo is renamed, and `master`
-(P3 + the rename commit) is pushed.
+Done once, with the P3 deploy riding along. The owner had already **renamed** the `brimbox` DNS record
+to `benchbox`, so the old name stopped resolving and there was nothing to redirect: the old site and
+certificate were removed straight away instead of being kept until 2026-12-30.
 
 ```bash
-# 1. The new domain's site and certificate, beside the old one (nothing stops yet).
-nslookup benchbox.ferbotz.com 1.1.1.1                     # expect 13.205.128.80
-#    write sites-available/benchbox from the template in "First-time setup", then:
+# 1. The new domain's site and certificate (the template is in "First-time setup").
+nslookup benchbox.ferbotz.com 1.1.1.1                     # 13.205.128.80
 sudo ln -s /etc/nginx/sites-available/benchbox /etc/nginx/sites-enabled/benchbox
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d benchbox.ferbotz.com --non-interactive --redirect
 
-# 2. Stop the old stack (downtime starts).
+# 2. Stop the old stack.
 cd /opt/apps/brimbox/BrimBox-Backend && docker compose -f docker-compose.prod.yml -p brimbox down </dev/null
 
-# 3. Database and role. The role's password is SCRAM, so it survives the rename (an MD5 one wouldn't).
+# 3. Database and role. The role's password is SCRAM, so it survived the rename (an MD5 one wouldn't).
 sudo -u postgres psql -c 'ALTER DATABASE brimbox RENAME TO benchbox' -c 'ALTER ROLE brimbox RENAME TO benchbox'
-#    pg_hba.conf: the brimbox line becomes "host benchbox benchbox 172.16.0.0/12 scram-sha-256"
+#    pg_hba.conf line 138 became "host benchbox benchbox 172.16.0.0/12 scram-sha-256"
+#    (backup: pg_hba.conf.bak-20261023-brimbox beside it)
 sudo systemctl reload postgresql
 
 # 4. The checkout: new path, renamed remote, and the two .env values that carry the name
-#    (DATABASE_URL's user and database, APP_PUBLIC_URL). Edited in place, never displayed.
+#    (DATABASE_URL's user and database, APP_PUBLIC_URL), edited in place with sed, never displayed.
 mkdir -p /opt/apps/benchbox && mv /opt/apps/brimbox/BrimBox-Backend /opt/apps/benchbox/BenchBox-Backend
 rmdir /opt/apps/brimbox && cd /opt/apps/benchbox/BenchBox-Backend
 git remote set-url origin git@github.com:techferbotz/BenchBox-Backend.git && git pull
 
-# 5. Migrate (P3), then start as Compose project benchbox (downtime ends).
+# 5. Migrate (P3), then start as Compose project benchbox.
 docker compose -f docker-compose.prod.yml run --rm --build migrate </dev/null
 docker compose -f docker-compose.prod.yml up -d --build app worker </dev/null
-docker network inspect benchbox_default -f '{{(index .IPAM.Config 0).Subnet}}'   # inside 172.16.0.0/12?
+docker network inspect benchbox_default -f '{{(index .IPAM.Config 0).Subnet}}'   # 172.22.0.0/16: inside /12
 
 # 6. Verify: health, /config links on the new domain, legal pages, sign-in route, the worker.
 curl -s https://benchbox.ferbotz.com/                     # BenchBox Backend Running
 curl -s https://benchbox.ferbotz.com/config | grep -o '"privacyPolicy":"[^"]*"'
 docker compose -f docker-compose.prod.yml logs --tail=20 worker
 
-# 7. The old domain: its site becomes a 308 to the new one (method-preserving), until 2026-12-30.
-# 8. With the owner's OK: remove the old images (brimbox-app, brimbox-worker, brimbox-migrate).
+# 7. The old domain (it no longer resolves): site and certificate removed.
+cp /etc/nginx/sites-available/brimbox ~/nginx-site-brimbox.bak
+sudo rm /etc/nginx/sites-enabled/brimbox /etc/nginx/sites-available/brimbox
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot delete --cert-name brimbox.ferbotz.com --non-interactive
+sudo certbot renew --dry-run --cert-name benchbox.ferbotz.com             # success
+
+# 8. With the owner's OK: the old images (about 2.5 GB).
+docker image rm brimbox-app brimbox-worker brimbox-migrate
 ```
 
-After 2026-12-30: `sudo certbot delete --cert-name brimbox.ferbotz.com`, remove the old site, and
-delete the `brimbox` DNS record (human).
+Downtime: from step 2 to step 5, a few minutes. The API had in fact been unreachable since the DNS
+record was renamed, until step 1 put the new domain in front of the old stack.
 
-## P3 deploy: uploads and downloads (runbook)
+## P3 deploy: uploads and downloads (runbook, done 2026-10-23)
 
 A schema change (`Blob`, `UploadSession`, `StorageEvent`, `OutboxJob`, `User.storedBytes`,
 `Node.blobId`/`hasThumbnail`, and an index on `Node.parentId`), so migrate first. Nothing new is

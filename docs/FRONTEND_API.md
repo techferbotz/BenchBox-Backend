@@ -9,10 +9,7 @@
 
 Everything the app needs to build its data layer. Examples are JSON and stack-agnostic.
 
-- **Base URL:** `https://benchbox.ferbotz.com`. **Not live yet:** until a CHANGELOG entry announces the
-  switch, the server answers only at `https://brimbox.ferbotz.com` (the project's old name). Keep the
-  base URL in one build setting so the switch is a one-line change; after it, the old domain redirects
-  until 2026-12-30.
+- **Base URL:** `https://benchbox.ferbotz.com`. Keep it in one build setting.
 - **API prefix:** app endpoints live under **`/api/v1`** (§4 onwards). These are unversioned and fixed
   across House of Apps backends: `GET /` (health), `GET /config`, and the legal pages.
 - **Content type:** `application/json` for request bodies. File bytes are never sent to this API
