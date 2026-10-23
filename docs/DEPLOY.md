@@ -65,7 +65,8 @@ access or touches an account. Claude prepares the exact steps for each.
 | Rename: DNS A record `benchbox` → `13.205.128.80`, DNS only (Cloudflare dashboard) | human | pending |
 | Rename: GitHub repo `BrimBox-Backend` → `BenchBox-Backend` | human (or Claude with `gh`) | pending |
 | Rename: the credentials registry's entry | human | pending |
-| Rename: Drive folder, details doc, contract folder; BE-005; protocol 03 | Claude | pending |
+| Rename: Drive folder, details doc, contract folder; BE-005; protocol 03 | Claude | done 2026-10-23 |
+| Google OAuth Android client: the app's package name + debug/release SHA-1 (an `APP-nnn` request) | app side, then human | waits on the app project |
 | Rename switch on the box, with the P3 deploy (runbook below) | Claude, over SSH | pending |
 | Old domain: redirect until 2026-12-30, then remove its cert and site; delete the `brimbox` DNS record | Claude, then human | after the switch |
 

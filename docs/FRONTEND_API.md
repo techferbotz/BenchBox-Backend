@@ -2,14 +2,17 @@
   Reference doc — the current contract the BenchBox app builds against.
   Source of truth: the backend repo's docs/FRONTEND_API.md. Mirrored to
   BenchBox-Contract/backend/API.md whenever a CHANGELOG entry says this file moved.
-  Last refreshed: 2026-10-22 (BE-004).
+  Last refreshed: 2026-10-23 (BE-005).
 -->
 
 # BenchBox — Frontend (Client) API
 
 Everything the app needs to build its data layer. Examples are JSON and stack-agnostic.
 
-- **Base URL:** `https://benchbox.ferbotz.com`
+- **Base URL:** `https://benchbox.ferbotz.com`. **Not live yet:** until a CHANGELOG entry announces the
+  switch, the server answers only at `https://brimbox.ferbotz.com` (the project's old name). Keep the
+  base URL in one build setting so the switch is a one-line change; after it, the old domain redirects
+  until 2026-12-30.
 - **API prefix:** app endpoints live under **`/api/v1`** (§4 onwards). These are unversioned and fixed
   across House of Apps backends: `GET /` (health), `GET /config`, and the legal pages.
 - **Content type:** `application/json` for request bodies. File bytes are never sent to this API
@@ -85,6 +88,34 @@ so they are listed together here:
   device.
 - **Sync is a change feed** (live since BE-003, §7) with an opaque cursor, designed for a local Room
   cache. No device clocks are involved anywhere.
+
+### Coming next (not built — plan the architecture, don't build against these shapes)
+
+Listed so screens and navigation can be planned. Endpoint names and fields **will** change; each part
+arrives as its own `BE-nnn` entry with the exact contract, and only then is it in this document.
+
+- **Pay-as-you-use billing.** Users pay monthly for the storage they actually kept, measured by the day.
+  Files in the trash count; thumbnails and unfinished uploads don't. 1 GB = 10⁹ bytes. The first GBs are
+  free (the free allowance is already in `GET /api/v1/me/storage`). The app **never computes a charge**:
+  it shows the amounts the server sends, as paise strings. Expect:
+  - a **billing summary**: month-to-date amount, projected month-end amount, the cap, the payment
+    method and the account standing;
+  - **usage history** by day, and **monthly statements** (closed on the 1st, India time), with GST;
+  - a **monthly cap** the user picks (₹100 by default, presets or a custom amount);
+  - **UPI AutoPay / card mandate** setup: the app opens a payment-provider link and the user approves
+    it in their UPI or card app; the server confirms it and the app refreshes;
+  - **payment links** for an unpaid or above-cap amount, opened in the browser;
+  - an **account standing** (good, past due, suspended) that can block uploads but keeps downloads
+    working, so the app needs a banner and a "pay now" path.
+- **Google Play credits.** Because of Play's policy for storage apps, the app shows Google's user-choice
+  billing screen: "Google Play" (prepaid credit packs, bought in the app through Play) or "UPI AutoPay /
+  card" (the mandate). Credits are used before the mandate is charged.
+- **Notifications** (FCM, the push token already registered through `PUT /api/v1/me/push-token`):
+  projected over the cap, 80% and 100% of the cap reached, bill ready, debit succeeded or failed. Each
+  will carry a type and a deep-link target. Reaching the cap only notifies; uploads keep working.
+- **Share links.** Share a file or folder as a link that expires (7 days by default) and can be revoked;
+  recipients open a web page with no app needed. Android App Links will open it in the app when it's
+  installed.
 
 ---
 
