@@ -2,7 +2,7 @@
   Reference doc — the current contract the BenchBox app builds against.
   Source of truth: the backend repo's docs/FRONTEND_API.md. Mirrored to
   BenchBox-Contract/backend/API.md whenever a CHANGELOG entry says this file moved.
-  Last refreshed: 2026-10-23 (BE-005).
+  Last refreshed: 2026-10-26 (BE-007).
 -->
 
 # BenchBox — Frontend (Client) API
@@ -194,8 +194,14 @@ followed by a Google account confirmation (§5). If the app's screens end up nam
 ### The token model
 
 1. **Sign in with Google** on the device (Credential Manager / "Sign in with Google") using BenchBox's
-   **server client id** — the OAuth *web* client id, published in the contract folder once it exists.
-   Until then `POST /api/v1/auth/google` answers `503 SERVICE_UNAVAILABLE`.
+   **server client id**, the OAuth *web* client id. It isn't secret:
+
+   `583560195561-r8vbnr8pm977e97q2h8md5pve5hn4rs3.apps.googleusercontent.com`
+
+   Google gives an idToken only to a build whose package name and signing-key SHA-1 are registered as
+   an Android client in the same Google Cloud project. Registered so far: `com.ferbotz.benchbox` with
+   the debug key (APP-001). The release key, and later the Play app-signing key, each need their own
+   Android client: send each SHA-1 in an `APP-nnn` request.
 2. Send the resulting **idToken** to `POST /api/v1/auth/google`. You get back:
    - an `accessToken`, which lasts `expiresIn` seconds (3600);
    - a `refreshToken` for this device;
@@ -348,6 +354,11 @@ unknown id, or another account's, returns `404 NOT_FOUND`.
 - **When to call:** after sign-in, and again whenever FCM rotates the token.
 - **To stop notifications** on this device, send `{ "token": null }`.
 - **Signing out** this device drops its token automatically.
+
+The token comes from Firebase Cloud Messaging. BenchBox's Firebase project is `benchbox-75a31`, and
+its `google-services.json` for `com.ferbotz.benchbox` is `backend/google-services.json` in the
+contract folder (BE-007). The file has no OAuth client entries, so sign-in keeps using the server
+client id from §4.
 
 Notifications themselves (usage alerts, bills) arrive in a later phase.
 

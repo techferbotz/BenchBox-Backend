@@ -9,10 +9,10 @@ Multiplatform app, **Android first**, iOS later.
 billing, and the phased roadmap (§12). Read it before building a phase. **P0 (foundations) has been live
 since 2026-10-01. P1 (accounts: Google sign-in, device sessions, account deletion), P2 (file tree,
 trash, search, sync feed, worker) and P3 (uploads, downloads, thumbnails, the storage log, the outbox,
-reconciliation; deployed 2026-10-23) are live at `https://benchbox.ferbotz.com`. Sign-in answers 503
-until the Google OAuth client exists (it waits on the app's package name and SHA-1s), and the file
-endpoints answer 503 until the R2 buckets and tokens exist. Next: P4 (metering, statements, FCM +
-SES).** Deploy facts: `docs/DEPLOY.md`.
+reconciliation; deployed 2026-10-23) are live at `https://benchbox.ferbotz.com`. Google sign-in is
+configured since 2026-10-26 (only the app's debug key is registered so far; release-key SHA-1s arrive
+as APP requests). File storage is on since 2026-10-26 (R2 bucket `benchbox-files`). Next: P4
+(metering, statements, FCM + SES).** Deploy facts: `docs/DEPLOY.md`.
 
 **Renamed from BrimBox on 2026-10-22; the box switched over on 2026-10-23.** Everything — code, docs,
 domain, Compose project, checkout path, database and role, GitHub repo, Drive folders — uses BenchBox /
@@ -129,7 +129,9 @@ src/
   scripts/check-*.ts            fixture checks (the *-db ones need a local database);
                                 scripts/support/fakeObjectStore.ts is the in-memory R2
   types/express.d.ts            req.userId / req.sessionId / req.deviceId
-docs/                           BACKEND_PLAN.md, FRONTEND_API.md, REMOTE_CONFIG.md, DEPLOY.md
+docs/                           BACKEND_PLAN.md, FRONTEND_API.md, REMOTE_CONFIG.md, DEPLOY.md,
+                                UI_DESIGN_PROMPT.md (the Claude Design brief for the app's UI; keep
+                                it in step with features)
 ```
 
 Feature modules follow Billanta/Curiously: `modules/<f>/<f>.routes.ts` + `controller/ service/
@@ -188,6 +190,10 @@ repository/ dto/`. External SDKs each sit behind exactly one file (`storage/r2St
   app's plain PUTs fail. `check:storage` asserts the URL shape.
 - Presigned URLs can't be revoked: cleanup of a cancelled upload waits `UPLOAD_CLEANUP_DELAY_SECONDS`
   so a PUT already under way lands before the delete.
+- R2 lists a fresh encoding of a multipart upload id every time (ListMultipartUploads), and every
+  encoding works for ListParts and abort. Use upload ids, never compare them: match listed uploads to
+  sessions by object key (`reconcile.service.ts`). The fake store does the same; `check:r2-live` pins
+  it against the dev bucket.
 - Don't walk the tree with a recursive CTE join: when one huge folder dominates the statistics, the
   planner scans the whole `Node` table once per frontier row (a 70,000-file folder took minutes).
   `TreeTx.subtreeIds` goes level by level on the `parentId` index; check:storage-db pins 20,000 files.

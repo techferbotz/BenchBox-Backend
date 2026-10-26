@@ -28,7 +28,8 @@ This page covers BenchBox's setup on the box and its project-specific steps.
   - **Database:** `benchbox` (owned by role `benchbox`) on the host PostgreSQL 18.6, with migration
     `20261001094719_init_accounts` applied.
   - **Endpoints:** `/api/v1/auth/*` and `/api/v1/me` are live.
-  - **Sign-in:** answers 503 until `GOOGLE_CLIENT_ID` is set (Google OAuth client, below).
+  - **Sign-in:** answered 503 until `GOOGLE_CLIENT_ID` was set on 2026-10-26 (Google OAuth client,
+    below).
 - **2026-10-09 — P2 deployed** (commit `884e2f3`).
   - **Migration:** `20261009153216_tree_sync_jobs`.
   - **Endpoints:** `/api/v1/folders|nodes|trash|search|sync` are live behind sign-in.
@@ -43,6 +44,18 @@ This page covers BenchBox's setup on the box and its project-specific steps.
   - **Worker:** six jobs (two every N minutes); all of that day's runs SUCCEEDED, and reconciliation
     reported "bucket: not checked (storage not configured)".
   - **Disk:** 13 GB free after the builds and removing the three old `brimbox-*` images.
+- **2026-10-26 — Google sign-in configured.** `GOOGLE_CLIENT_ID` (the web client id) is in the server
+  `.env` and the app container was recreated. A junk idToken now gets `401 INVALID_ID_TOKEN` instead
+  of `503`. Only the app's debug key is registered (APP-001); the release key needs its own Android
+  client.
+- **2026-10-26 — File storage on.** The four `R2_*` values for `benchbox-files` are in the server
+  `.env`, and the app and worker were recreated. From inside the app container, R2 answers (an empty
+  bucket). Against `benchbox-files-dev`, `check:r2-live` passed 5 of 5 after two fixes it found:
+  - its multipart test used a file below the 16 MiB single-PUT limit;
+  - R2 re-encodes multipart upload ids on every listing, so `storage.reconcile` would have aborted
+    every upload still under way. It now matches uploads by key, and the fake store mimics R2.
+
+  The tokens were pasted into a chat session: roll them when convenient (R2 setup, below).
 
 ## Who does what
 
@@ -60,18 +73,23 @@ access or touches an account. Claude prepares the exact steps for each.
 | Postgres role + database, `pg_hba.conf` line, secrets in `.env`, migrate, app (P1) | Claude, over SSH | done 2026-10-01 |
 | DB password + `JWT_SECRET` in the details doc (copied box → doc, never displayed) | Claude | done 2026-10-01 |
 | Copy the details doc's "Secret values" into the HOA Credentials Registry | human | pending |
-| Google OAuth client: consent screen, Android + Web clients | human | pending |
+| Google OAuth client: consent screen, Android (debug key) + Web clients | human | done 2026-10-26 |
+| `GOOGLE_CLIENT_ID` into the server `.env`, recreate the app | Claude, over SSH | done 2026-10-26 |
 | P2: migrate, build + start app and worker | Claude, over SSH | done 2026-10-09 |
 | Grow the root EBS volume 20 → 40 GiB (`modify-volume`; irreversible) | human | done 2026-10-09 |
 | Grow partition + ext4 filesystem into it (`growpart`, `resize2fs`; online) | Claude, over SSH | done 2026-10-09 |
-| R2: enable R2 on the Cloudflare account; buckets `benchbox-files` + `benchbox-files-dev`, a token scoped to each (Cloudflare dashboard) | human | pending |
-| R2 values into the details doc's R2 section | human | pending |
-| R2 values → server `.env` (production bucket) and local `.env` (dev bucket), never displayed | Claude | after the above |
+| R2: enable R2 on the Cloudflare account; buckets `benchbox-files` + `benchbox-files-dev`, an Account API token scoped to each (Cloudflare dashboard) | human | done 2026-10-26 |
+| R2 values into the details doc's R2 section | Claude, from the owner | done 2026-10-26 |
+| R2 values → server `.env` (production bucket) and local `.env` (dev bucket), never displayed | Claude | done 2026-10-26 |
+| Roll both R2 tokens (they were pasted into a chat session); new values into the details doc, then Claude swaps them in | human, then Claude | pending |
 | Rename: DNS A record `brimbox` renamed to `benchbox` → `13.205.128.80`, DNS only (Cloudflare dashboard); the old name no longer resolves | human | done 2026-10-23 |
 | Rename: GitHub repo `BrimBox-Backend` → `BenchBox-Backend` | human | done 2026-10-23 |
 | Rename: the credentials registry's entry | — | not needed: the registry never got an entry (last edited 2026-09-23); see the "Secret values" row above |
 | Rename: Drive folder, details doc, contract folder; BE-005; protocol 03 | Claude | done 2026-10-23 |
-| Google OAuth Android client: the app's package name + debug/release SHA-1 (an `APP-nnn` request) | app side, then human | waits on the app project |
+| Google OAuth Android client for the debug key: `com.ferbotz.benchbox` + its SHA-1 (APP-001) | app side, then human | done 2026-10-26 |
+| Another Android client for each further key (release, Play app signing), from its `APP-nnn` request | app side, then human | when each SHA-1 arrives |
+| Firebase project `benchbox-75a31` (number `339320620607`) with the Android app; `google-services.json` to the app through the contract (BE-007) | human, then Claude | done 2026-10-26 |
+| FCM sending credential for the server (a Firebase service account) | human | P4 |
 | Rename switch on the box, with the P3 deploy (runbook below) | Claude, over SSH | done 2026-10-23 |
 | Old domain: its DNS record was renamed, so no redirect; old nginx site and certificate removed, old images removed | Claude | done 2026-10-23 |
 
@@ -243,18 +261,22 @@ The worker runs each daily job once per IST day, at or after its time (03:00 / 0
 later in the day, it runs that day's jobs straight away. A failed run is retried after 15 minutes; the
 `JobRun` table shows each run's status and summary.
 
-### Google OAuth client (human, for sign-in)
+### Google OAuth client (human, done 2026-10-26)
 
-Use a Google Cloud project of BenchBox's own, so the sign-in consent screen says "BenchBox":
+Done in BenchBox's own Google Cloud project, **BenchBox** (project number `583560195561`), so the
+sign-in consent screen says "BenchBox". The web client id is in the server `.env` and in BE-006.
 
-1. **OAuth consent screen:** app name **BenchBox**, a support email, and the privacy and terms URLs
-   (`https://benchbox.ferbotz.com/privacy`, `/terms`).
-2. **Credentials → Create OAuth client → Android:** the app's package name, plus the SHA-1 fingerprints
-   of its debug and release signing keys (the app side supplies these).
-3. **Credentials → Create OAuth client → Web application:** its client id is the **server client id**.
-   It isn't secret. Put it in the server `.env` as `GOOGLE_CLIENT_ID=…` and recreate the container
-   (`docker compose -f docker-compose.prod.yml up -d app`). Also publish it in the contract folder: the
-   app passes it to Credential Manager.
+1. **Google Auth Platform** (formerly "OAuth consent screen"): app name **BenchBox**, a support email,
+   the privacy and terms URLs (`https://benchbox.ferbotz.com/privacy`, `/terms`), authorised domain
+   `ferbotz.com`, audience External. Publish it ("In production"): while it's in testing, only the
+   listed test users can sign in. Skip the logo, which would trigger Google's brand verification.
+2. **Clients → Create client → Android:** package `com.ferbotz.benchbox` with the debug key's SHA-1
+   (APP-001). Each further signing key (release, then Play app signing) gets **another** Android client
+   when the app side sends its SHA-1.
+3. **Clients → Create client → Web application:** its client id is the **server client id**. It isn't
+   secret. It goes in the server `.env` as `GOOGLE_CLIENT_ID=…`, then recreate the container
+   (`docker compose -f docker-compose.prod.yml up -d app`), and in the contract: the app passes it to
+   Credential Manager.
 
 ## Rename switch: BrimBox → BenchBox (done 2026-10-23)
 
@@ -327,12 +349,23 @@ curl -s https://benchbox.ferbotz.com/api/v1/uploads -X POST                  # 4
 docker compose -f docker-compose.prod.yml logs --tail=20 worker             # six jobs listed, two "every N min"
 ```
 
-**Turning storage on** (once the R2 values are in the details doc): Claude appends the four `R2_*`
-lines to the server `.env` straight from the doc, without displaying them, then recreates both
-services so they read them: `docker compose -f docker-compose.prod.yml up -d app worker </dev/null`.
-A partial set fails the boot on purpose (`R2 is partly configured…`), so check the logs. End-to-end
-uploads can only be tried once sign-in works (the Google OAuth client); before that, `check:r2-live`
-proves R2 itself from a dev machine against the dev bucket.
+**Turning storage on** (done 2026-10-26): Claude appends the four `R2_*` lines to the server `.env`
+straight from the details doc, without displaying them, then recreates both services so they read
+them: `docker compose -f docker-compose.prod.yml up -d app worker </dev/null`. A partial set fails
+the boot on purpose (`R2 is partly configured…`), so check the logs. Then check R2 from inside the
+app container, which prints the bucket and a `null` head for a key that doesn't exist:
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T app node -e 'const { objectStore: s } = require("./dist/storage/r2Storage");
+s.headObject("u/healthcheck").then((h) => console.log(s.bucket, h))' </dev/null
+```
+
+`check:r2-live` proves R2 itself from a dev machine against the dev bucket. End-to-end uploads need a
+signed-in app.
+
+**Rolling a token:** Cloudflare → R2 → Manage API tokens → the token → Roll. Put the new values in the
+details doc, replace the matching `R2_*` lines in the server `.env` (or the local one, for the dev
+bucket) without displaying them, and recreate both services.
 
 ### R2 setup (human)
 
@@ -346,7 +379,9 @@ In the Cloudflare account that already hosts `ferbotz.com`:
    production data never meets a test.
 4. **Each bucket → Settings → Object lifecycle rules:** check the default rule that expires unfinished
    multipart uploads after **7 days** is there; new buckets get it. Add it if not.
-5. **R2 → Manage API tokens → Create API token**, twice:
+5. **R2 → Manage API tokens → Create Account API token** (not a User API token: an account token
+   belongs to the Cloudflare account, so it keeps working if the user who made it changes role or
+   leaves), twice:
    - permission **Object Read & Write**, **Apply to specific buckets only** → `benchbox-files`, TTL
      forever;
    - the same for `benchbox-files-dev`.
