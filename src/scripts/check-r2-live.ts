@@ -5,7 +5,8 @@
 //
 //   - a presigned PUT works, and a body of a different length than signed is refused;
 //   - a presigned GET answers with the name and type BenchBox asks for, and serves ranges;
-//   - multipart: parts, ListParts, completion, abort;
+//   - multipart: parts, ListParts, completion, abort — including by the id the listing returns,
+//     which R2 re-encodes on every listing (so ids are used, never compared);
 //   - listing and batch delete.
 // Everything it creates lives under one random u/<uuid>/ prefix and is deleted at the end.
 
@@ -23,6 +24,7 @@ for (const [key, value] of Object.entries({
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { config } from "../config/env";
+import { SINGLE_PUT_MAX_BYTES } from "../modules/files/files.policy";
 import { attachmentDisposition, objectKeyFor, partSizeOf, planUpload, thumbKeyFor } from "../modules/files/files.rules";
 import { createR2Store } from "../storage/r2Storage";
 
@@ -98,9 +100,10 @@ const main = async (): Promise<void> => {
 
   await check("multipart: parts signed per size, listed, assembled; HeadObject reports the whole", async () => {
     const key = objectKeyFor(owner, randomUUID());
-    const size = 8 * 1024 * 1024 + 1000;
+    // Just past the single-PUT limit, so the last part is a small remainder.
+    const size = SINGLE_PUT_MAX_BYTES + 1000;
     const plan = planUpload(size);
-    assert.equal(plan.partCount, 2);
+    assert.equal(plan.mode, "multipart");
     const uploadId = await store.createMultipartUpload(key);
     const body = randomBytes(size);
     let offset = 0;
@@ -111,7 +114,9 @@ const main = async (): Promise<void> => {
       offset += length;
     }
     const parts = await store.listParts(key, uploadId);
-    assert.deepEqual(parts?.map((p) => [p.partNumber, p.size]), [[1, plan.partSize], [2, 1000]]);
+    const expected = Array.from({ length: plan.partCount! }, (_, i) => [i + 1, partSizeOf(i + 1, plan.partSize!, plan.partCount!, size)]);
+    assert.deepEqual(parts?.map((p) => [p.partNumber, p.size]), expected);
+    assert.equal(expected[expected.length - 1][1], 1000);
     await store.completeMultipartUpload(key, uploadId, parts!);
     assert.deepEqual(await store.headObject(key), { size });
     assert.equal(await store.listParts(key, uploadId), null, "a completed upload is no longer listed");
@@ -120,8 +125,11 @@ const main = async (): Promise<void> => {
   await check("abort: an unfinished upload goes, and aborting twice is harmless", async () => {
     const key = objectKeyFor(owner, randomUUID());
     const uploadId = await store.createMultipartUpload(key);
-    assert.ok((await store.listMultipartUploads(prefix)).items.some((u) => u.uploadId === uploadId));
-    await store.abortMultipartUpload(key, uploadId);
+    // R2 lists a fresh encoding of the upload id each time, so find it by key; the listed id must
+    // still work, because account deletion aborts uploads by what the listing returns.
+    const listed = (await store.listMultipartUploads(prefix)).items.filter((u) => u.key === key);
+    assert.equal(listed.length, 1, "the unfinished upload is listed under its key");
+    await store.abortMultipartUpload(key, listed[0]!.uploadId);
     await store.abortMultipartUpload(key, uploadId);
     assert.equal(await store.listParts(key, uploadId), null);
   });

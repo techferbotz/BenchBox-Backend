@@ -562,6 +562,9 @@ const main = async (): Promise<void> => {
     const unknownKey = objectKeyFor(u, randomUUID());
     fake.objects.set(unknownKey, { size: 1, lastModified: new Date() }); // a key no upload ever had
     const stray = await fake.createMultipartUpload(objectKeyFor(u, keep.contentId!)); // nothing waits for it
+    const inFlight = await start(u, { name: "big.bin", size: 20 * MiB }); // a large upload still under way
+    const [firstPart] = (await uploads.partUrls(u, inFlight.id, [1])).parts;
+    fake.put(firstPart!.url, firstPart!.size);
     const lost = await uploadFile(u, { name: "lost.bin", size: 8 });
     fake.objects.delete(objectKeyFor(u, lost.contentId!)); // data loss
     await prisma.user.update({ where: { id: u }, data: { storedBytes: { increment: 1 } } }); // drift
@@ -571,7 +574,11 @@ const main = async (): Promise<void> => {
     assert.ok(report.bucket!.missing.includes(objectKeyFor(u, lost.contentId!)), "reports the missing object");
     assert.ok(report.drifting.includes(u), "reports the drifting account");
     assert.equal(fake.multipart.has(stray), false, "the stray upload is aborted");
+    // R2 lists a fresh encoding of every upload id, so this only holds if uploads are matched by key.
+    assert.deepEqual((await uploads.get(u, inFlight.id)).uploadedParts, [1], "an upload still under way is left alone");
     assert.match(await reconcile.run(now()), /^ALERT /, "the job's summary raises the alarm");
+    assert.deepEqual((await uploads.get(u, inFlight.id)).uploadedParts, [1], "…by the job too");
+    await uploads.abort(u, inFlight.id);
     assert.ok(fake.objects.has(objectKeyFor(u, keep.contentId!)), "live content untouched");
     await outbox.drain();
     assert.equal(fake.objects.has(objectKeyFor(u, gone.contentId!)), false, "garbage deleted");

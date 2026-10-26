@@ -191,13 +191,14 @@ export class ReconcileService {
       if (!blob.purgedAt && !present.has(blob.objectKey)) found.missing.push(blob.objectKey);
     }
 
-    // Multipart uploads nothing is waiting for (a pending session holds exactly one) — aborted here
-    // rather than through the outbox, whose cleanup would also delete the key, which may be live.
-    const waiting = new Set(
-      sessions.filter((s) => s.state === UploadState.PENDING && s.r2UploadId).map((s) => `${s.objectKey}\n${s.r2UploadId}`)
-    );
+    // Multipart uploads nothing is waiting for — aborted here rather than through the outbox, whose
+    // cleanup would also delete the key, which may be live. Matched by key, never by upload id: R2
+    // lists a fresh encoding of an upload's id every time, so ids never compare equal (any encoding
+    // still works for abort). A pending session's key is its own; a second upload left under it by a
+    // crash goes with the bucket's 7-day rule for unfinished uploads.
+    const waiting = new Set(sessions.filter((s) => s.state === UploadState.PENDING).map((s) => s.objectKey));
     for (const upload of uploads) {
-      if (waiting.has(`${upload.key}\n${upload.uploadId}`)) continue;
+      if (waiting.has(upload.key)) continue;
       await store.abortMultipartUpload(upload.key, upload.uploadId);
       found.aborted += 1;
     }

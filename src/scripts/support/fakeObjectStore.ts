@@ -2,7 +2,9 @@ import { ListedObject, ObjectStore, Page, UploadedPart } from "../../storage/obj
 
 // An in-memory ObjectStore for check:storage-db: R2's behaviour as far as BenchBox relies on it, and
 // the app's side too — `put` performs what the app does with a presigned URL, refusing a body
-// whose length differs from the signed one, as R2 would.
+// whose length differs from the signed one, as R2 would. Like R2, listing unfinished uploads hands
+// out a fresh encoding of each upload id every time ("mp-1~7"), and every call accepts any
+// encoding: upload ids can be used, never compared (check:r2-live pins this on the real thing).
 
 interface MultipartUpload {
   key: string;
@@ -16,7 +18,13 @@ export class FakeObjectStore implements ObjectStore {
   readonly objects = new Map<string, { size: number; lastModified: Date }>();
   readonly multipart = new Map<string, MultipartUpload>();
   private sequence = 0;
+  private listings = 0;
   private failures = new Map<string, number>();
+
+  /** The upload an id refers to, whichever encoding of it the caller holds. */
+  private upload(uploadId: string): MultipartUpload | undefined {
+    return this.multipart.get(uploadId.split("~")[0]!);
+  }
 
   /** Make the next `times` calls of `method` throw, like an R2 outage. */
   failNext(method: Method, times = 1): void {
@@ -60,7 +68,7 @@ export class FakeObjectStore implements ObjectStore {
     if (parsed.host === "put") {
       this.objects.set(key, { size, lastModified: new Date() });
     } else if (parsed.host === "part") {
-      const upload = this.multipart.get(parsed.searchParams.get("upload") ?? "");
+      const upload = this.upload(parsed.searchParams.get("upload") ?? "");
       if (!upload || upload.key !== key) throw new Error("NoSuchUpload");
       const partNumber = Number(parsed.searchParams.get("part"));
       upload.parts.set(partNumber, { partNumber, size, etag: `"${key}-${partNumber}-${size}"` });
@@ -71,7 +79,7 @@ export class FakeObjectStore implements ObjectStore {
 
   /** A part of any size, bypassing the signature — what a buggy client or a lost byte would leave. */
   putPartUnsigned(uploadId: string, partNumber: number, size: number): void {
-    const upload = this.multipart.get(uploadId);
+    const upload = this.upload(uploadId);
     if (!upload) throw new Error("NoSuchUpload");
     upload.parts.set(partNumber, { partNumber, size, etag: `"raw-${partNumber}-${size}"` });
   }
@@ -87,14 +95,14 @@ export class FakeObjectStore implements ObjectStore {
 
   async listParts(key: string, uploadId: string): Promise<UploadedPart[] | null> {
     this.maybeFail("listParts");
-    const upload = this.multipart.get(uploadId);
+    const upload = this.upload(uploadId);
     if (!upload || upload.key !== key) return null;
     return [...upload.parts.values()].sort((a, b) => a.partNumber - b.partNumber);
   }
 
   async completeMultipartUpload(key: string, uploadId: string, parts: { partNumber: number; etag: string }[]): Promise<void> {
     this.maybeFail("completeMultipartUpload");
-    const upload = this.multipart.get(uploadId);
+    const upload = this.upload(uploadId);
     if (!upload || upload.key !== key) throw Object.assign(new Error("NoSuchUpload"), { name: "NoSuchUpload" });
     let size = 0;
     for (const { partNumber, etag } of parts) {
@@ -103,12 +111,12 @@ export class FakeObjectStore implements ObjectStore {
       size += part.size;
     }
     this.objects.set(key, { size, lastModified: new Date() });
-    this.multipart.delete(uploadId);
+    this.multipart.delete(uploadId.split("~")[0]!);
   }
 
   async abortMultipartUpload(_key: string, uploadId: string): Promise<void> {
     this.maybeFail("abortMultipartUpload");
-    this.multipart.delete(uploadId);
+    this.multipart.delete(uploadId.split("~")[0]!);
   }
 
   async headObject(key: string): Promise<{ size: number } | null> {
@@ -149,7 +157,7 @@ export class FakeObjectStore implements ObjectStore {
     this.maybeFail("listMultipartUploads");
     const items = [...this.multipart.entries()]
       .filter(([, upload]) => upload.key.startsWith(prefix))
-      .map(([uploadId, upload]) => ({ key: upload.key, uploadId }));
+      .map(([uploadId, upload]) => ({ key: upload.key, uploadId: `${uploadId}~${++this.listings}` }));
     return { items, next: null };
   }
 
