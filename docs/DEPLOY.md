@@ -53,7 +53,8 @@ This page covers BenchBox's setup on the box and its project-specific steps.
   bucket). Against `benchbox-files-dev`, `check:r2-live` passed 5 of 5 after two fixes it found:
   - its multipart test used a file below the 16 MiB single-PUT limit;
   - R2 re-encodes multipart upload ids on every listing, so `storage.reconcile` would have aborted
-    every upload still under way. It now matches uploads by key, and the fake store mimics R2.
+    every upload still under way. It now matches uploads by key, and the fake store mimics R2. The
+    fix was deployed the same day (commit `c714af5`, box at `56f23a9`; no migration).
 
   The tokens were pasted into a chat session: roll them when convenient (R2 setup, below).
 
