@@ -43,13 +43,6 @@ export const MAX_PENDING_UPLOADS = 50;
 /** The app's thumbnail: a ≤ 512 px WebP fits easily. Thumbnails are not billed. */
 export const MAX_THUMBNAIL_BYTES = 256 * 1024;
 
-/**
- * What an account may store before billing exists. Billing (P4/P5) replaces this with the price
- * book's free allowance, and an active auto-pay mandate or Play credit lifts the limit.
- * TODO(decision): the free tier is still open (docs/BACKEND_PLAN.md §13); 2 GB is the suggestion.
- */
-export const FREE_STORAGE_BYTES = 2_000_000_000;
-
 /** Lifetime of a download URL. Ranges work, so a download can resume within it. */
 export const DOWNLOAD_URL_TTL_SECONDS = 15 * 60;
 

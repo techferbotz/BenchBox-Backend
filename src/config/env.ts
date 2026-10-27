@@ -107,6 +107,20 @@ const parseJsonObjectEnv = (key: string): Record<string, unknown> | null => {
   return parsed as Record<string, unknown>;
 };
 
+/**
+ * Whether an optional integration is configured: ALL of its keys set (true) or NONE (false). A
+ * partial set is almost always a paste mistake, so it fails the boot instead of half-working.
+ */
+const allOrNone = (name: string, keys: readonly string[]): boolean => {
+  const present = keys.filter((key) => (process.env[key] ?? "").trim().length > 0);
+  if (present.length === 0) return false;
+  if (present.length < keys.length) {
+    const missing = keys.filter((key) => !present.includes(key));
+    throw new Error(`${name} is partly configured: set all of ${keys.join(", ")} or none (missing ${missing.join(", ")})`);
+  }
+  return true;
+};
+
 export interface R2Config {
   /** S3 API endpoint: https://<account id>.r2.cloudflarestorage.com, unless R2_ENDPOINT overrides it. */
   endpoint: string;
@@ -120,12 +134,7 @@ export interface R2Config {
 // always a paste mistake, so it fails the boot instead of half-working.
 const R2_KEYS = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"] as const;
 const parseR2Config = (): R2Config | null => {
-  const present = R2_KEYS.filter((key) => (process.env[key] ?? "").trim().length > 0);
-  if (present.length === 0) return null;
-  if (present.length < R2_KEYS.length) {
-    const missing = R2_KEYS.filter((key) => !present.includes(key));
-    throw new Error(`R2 is partly configured: set all of ${R2_KEYS.join(", ")} or none (missing ${missing.join(", ")})`);
-  }
+  if (!allOrNone("R2", R2_KEYS)) return null;
   const accountId = requireEnv("R2_ACCOUNT_ID");
   if (!/^[0-9a-f]{32}$/i.test(accountId)) {
     throw new Error("R2_ACCOUNT_ID must be the 32-character Cloudflare account id");
@@ -144,6 +153,67 @@ const parseR2Config = (): R2Config | null => {
     bucket,
     accessKeyId: requireEnv("R2_ACCESS_KEY_ID"),
     secretAccessKey: requireSecret("R2_SECRET_ACCESS_KEY", 32),
+  };
+};
+
+export interface FcmConfig {
+  projectId: string;
+  clientEmail: string;
+  privateKey: string;
+}
+
+// Firebase Cloud Messaging, for billing alerts on the phone (deviation D7): the three fields of a
+// Firebase service account's JSON key. All or none, like R2: none → push notifications are skipped
+// (and logged); a partial set fails the boot.
+const FCM_KEYS = ["FCM_PROJECT_ID", "FCM_CLIENT_EMAIL", "FCM_PRIVATE_KEY"] as const;
+/** Exported for check:metering, which pins none / partial / full. */
+export const parseFcmConfig = (): FcmConfig | null => {
+  if (!allOrNone("FCM", FCM_KEYS)) return null;
+  const projectId = requireEnv("FCM_PROJECT_ID");
+  if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projectId)) {
+    throw new Error(`FCM_PROJECT_ID must be a Firebase project id, like benchbox-75a31 (got "${projectId}")`);
+  }
+  const clientEmail = requireEnv("FCM_CLIENT_EMAIL");
+  if (!/^[^@\s]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$/.test(clientEmail)) {
+    throw new Error("FCM_CLIENT_EMAIL must be a service account's client_email (…@….iam.gserviceaccount.com)");
+  }
+  // The key is multi-line PEM; .env files usually carry it on one line with literal "\n"s, inside
+  // quotes that some env-file readers keep.
+  const privateKey = requireEnv("FCM_PRIVATE_KEY").replace(/^"([\s\S]*)"$/, "$1").replace(/\\n/g, "\n");
+  if (!privateKey.includes("-----BEGIN PRIVATE KEY-----") || !privateKey.includes("-----END PRIVATE KEY-----")) {
+    throw new Error("FCM_PRIVATE_KEY must be the service account's private_key (a PEM block)");
+  }
+  return { projectId, clientEmail, privateKey };
+};
+
+export interface SesConfig {
+  region: string;
+  /** The From header, e.g. "BenchBox <billing@ferbotz.com>"; its domain must be verified in SES. */
+  from: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+}
+
+// Amazon SES, for billing alerts by email (deviation D7). An IAM user's keys that may only send
+// email — not the box's instance role, which every app on the shared box could use. All or none:
+// none → emails are skipped (and logged); a partial set fails the boot.
+const SES_KEYS = ["SES_REGION", "SES_FROM", "SES_ACCESS_KEY_ID", "SES_SECRET_ACCESS_KEY"] as const;
+/** Exported for check:metering, which pins none / partial / full. */
+export const parseSesConfig = (): SesConfig | null => {
+  if (!allOrNone("SES", SES_KEYS)) return null;
+  const region = requireEnv("SES_REGION");
+  if (!/^[a-z]{2}(-[a-z]+)+-\d$/.test(region)) {
+    throw new Error(`SES_REGION must be an AWS region, like ap-south-1 (got "${region}")`);
+  }
+  const from = requireEnv("SES_FROM");
+  if (!/^([^<>@]+<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>|[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+)$/.test(from)) {
+    throw new Error(`SES_FROM must be an address or "Name <address>" (got "${from}")`);
+  }
+  return {
+    region,
+    from,
+    accessKeyId: requireEnv("SES_ACCESS_KEY_ID"),
+    secretAccessKey: requireSecret("SES_SECRET_ACCESS_KEY", 32),
   };
 };
 
@@ -175,4 +245,8 @@ export const config = {
   remoteConfigOverrides: parseJsonObjectEnv("REMOTE_CONFIG_OVERRIDES"),
   // File storage (Cloudflare R2). null → uploads, downloads and the storage jobs answer 503 / skip.
   r2: parseR2Config(),
+  // Billing alerts: push (Firebase Cloud Messaging) and email (Amazon SES). null → that channel is
+  // skipped and the skip logged; the alerts themselves are still recorded.
+  fcm: parseFcmConfig(),
+  ses: parseSesConfig(),
 };

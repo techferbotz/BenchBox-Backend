@@ -1,11 +1,11 @@
+import { IST_OFFSET_MINUTES } from "../../common/time";
+
 // Pure scheduling rules for the worker (deviation D5): when a job is due, and whether a run may be
-// claimed. Daily jobs run once per IST date; interval jobs every N minutes, keeping one JobRun row
-// per IST date. No database, no clock of their own — check:tree and check:storage pin them.
+// claimed. Daily jobs run once per IST date, monthly ones once per IST month; interval jobs every N
+// minutes, keeping one JobRun row per IST date. No database, no clock of their own — check:tree,
+// check:storage and check:metering pin them.
 
-/** Daily jobs run on India time (fixed +05:30, no daylight saving). */
-export const IST_OFFSET_MINUTES = 330;
-
-/** The IST calendar date and minute-of-day of an instant. */
+/** The IST calendar date and minute-of-day of an instant (jobs run on India time: +05:30, no DST). */
 export const istParts = (now: Date): { date: string; minuteOfDay: number } => {
   const shifted = new Date(now.getTime() + IST_OFFSET_MINUTES * 60_000);
   return {
@@ -28,6 +28,17 @@ const parseHhmm = (hhmm: string): number => {
 export const duePeriod = (atIst: string, now: Date): string | null => {
   const { date, minuteOfDay } = istParts(now);
   return minuteOfDay >= parseHhmm(atIst) ? date : null;
+};
+
+/**
+ * The period a monthly job (on the 1st at `atIst`) is due for right now — this IST month, "YYYY-MM",
+ * from that moment on — or null before it. A run missed on the 1st (worker down) catches up later
+ * in the month; it never runs twice in one month.
+ */
+export const dueMonthlyPeriod = (atIst: string, now: Date): string | null => {
+  const at = parseHhmm(atIst);
+  const { date, minuteOfDay } = istParts(now);
+  return !date.endsWith("-01") || minuteOfDay >= at ? date.slice(0, 7) : null;
 };
 
 export interface RunState {

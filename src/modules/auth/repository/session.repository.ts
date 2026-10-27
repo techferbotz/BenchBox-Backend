@@ -172,6 +172,20 @@ export class SessionRepository {
       await tx.session.update({ where: { id: sessionId }, data: { pushToken: token } });
     });
   }
+
+  /** The push tokens of the user's signed-in devices: where a notification goes. */
+  async pushTokensFor(userId: string, now: Date): Promise<string[]> {
+    const rows = await prisma.session.findMany({
+      where: { userId, expiresAt: { gt: now }, pushToken: { not: null } },
+      select: { pushToken: true },
+    });
+    return rows.flatMap((row) => (row.pushToken ? [row.pushToken] : []));
+  }
+
+  /** Forget tokens the push service says are dead (the app was uninstalled, or the token rotated). */
+  async clearPushTokens(tokens: readonly string[]): Promise<void> {
+    if (tokens.length > 0) await prisma.session.updateMany({ where: { pushToken: { in: [...tokens] } }, data: { pushToken: null } });
+  }
 }
 
 export const sessionRepository = new SessionRepository();

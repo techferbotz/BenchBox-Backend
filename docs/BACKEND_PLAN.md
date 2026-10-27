@@ -219,30 +219,34 @@ model StorageEvent {                     // append-only; the metering source of 
   @@index([userId, at])
 }
 
-model UsageDay {                         // one row per user per IST day
-  userId           String   @db.Uuid
-  day              DateTime @db.Date
-  byteSeconds      Decimal  @db.Decimal(38, 0)
-  endBytes         BigInt                // starting value for the next day
-  peakBytes        BigInt
-  downloadBytes    BigInt                // metered, not charged in v1
-  chargeMicroPaise BigInt                // exact daily charge, in millionths of a paisa
-  priceBookId      String   @db.Uuid
+model UsageDay {                         // one row per user per IST day (built in P4)
+  userId              String   @db.Uuid
+  day                 DateTime @db.Date
+  byteSeconds         Decimal  @db.Decimal(38, 3)  // exact: event times are milliseconds
+  billableByteSeconds Decimal  @db.Decimal(38, 3)  // above the day's free allowance
+  peakBytes           BigInt
+  endBytes            BigInt             // starting value for the next day
+  lastEventId         BigInt             // the next day reads the log after it
+  chargeMicroPaise    BigInt             // exact daily charge, in millionths of a paisa
+  priceBookId         String   @db.Uuid
   @@id([userId, day])
+  // downloadBytes (fair-use monitoring, §5.2) is not built yet
 }
 
-model PriceBook {
+model PriceBook {                        // built in P4; seeded with the §13 defaults
   id                     String   @id @default(uuid()) @db.Uuid
-  effectiveFrom          DateTime
-  storagePaisePerGBMonth BigInt            // 250 = ₹2.50
-  freeBytes              BigInt            // e.g. 2_000_000_000
+  effectiveFrom          DateTime @unique @db.Date  // the 1st of an IST month (a CHECK)
+  storagePaisePerGbMonth BigInt            // 250 = ₹2.50
+  freeBytes              BigInt            // e.g. 2_000_000_000; also the storage allowance
   gstBasisPoints         Int               // 1800 = 18%
-  minDebitPaise          BigInt            // smaller totals roll into next month
+  minimumChargePaise     BigInt            // smaller totals are carried into the next statement
+  note                   String?
+  createdAt              DateTime          // an increase's notice period starts here (§7.1)
 }
 
-model BillingAccount {
+model BillingAccount {                   // P4 builds the limit; P5 the rest
   userId              String       @id @db.Uuid
-  capPaise            BigInt?               // = the mandate's max_amount
+  monthlyLimitPaise   BigInt?               // = the mandate's max_amount (the "cap"; users see "limit")
   mandateState        MandateState @default(NONE)  // NONE | PENDING | ACTIVE | PAUSED | CANCELLED | REJECTED
   mandateMethod       String?               // UPI | CARD | EMANDATE
   razorpayCustomerId  String?
@@ -251,18 +255,21 @@ model BillingAccount {
   balancePaise        BigInt       @default(0)  // + credit, − owed; = last LedgerEntry.balanceAfter
 }
 
-model Statement {                        // one per user per IST calendar month
-  id             String          @id @default(uuid()) @db.Uuid
-  userId         String          @db.Uuid
-  periodStart    DateTime        @db.Date
-  periodEnd      DateTime        @db.Date
-  gbMonths       String                  // decimal string, for display
-  subtotalPaise  BigInt
-  gstPaise       BigInt
-  carriedInPaise BigInt                  // sub-minimum amount rolled from last month
-  totalPaise     BigInt
-  status         StatementStatus         // OPEN | COLLECTING | PAID | PAST_DUE | CARRIED | WAIVED
-  dueAt          DateTime?
+model Statement {                        // one per user per IST calendar month (built in P4)
+  id                     String          @id @default(uuid()) @db.Uuid
+  userId                 String          @db.Uuid
+  periodStart            DateTime        @db.Date
+  periodEnd              DateTime        @db.Date
+  byteSeconds            Decimal                 // the month's usage; GB-days/months are shown from these
+  billableByteSeconds    Decimal
+  priceBookId            String          @db.Uuid  // with its price, GST rate and minimum copied in
+  subtotalPaise          BigInt
+  gstPaise               BigInt
+  carriedInPaise         BigInt                  // an earlier sub-minimum total, carried in
+  totalPaise             BigInt
+  status                 StatementStatus         // P4: OPEN | CARRIED; P5 adds COLLECTING | PAID | PAST_DUE | WAIVED
+  carriedIntoId          String?         @unique // a CARRIED statement: the one that took its total
+  dueAt                  DateTime?               // P5
   @@unique([userId, periodStart])
 }
 
@@ -305,8 +312,10 @@ model ShareLink {
   createdAt  DateTime  @default(now())
 }
 
-// Small supporting tables: WebhookEvent @@id([provider, eventId]) · Notification (dedupeKey @unique)
-// · DeviceToken (FCM) · AbuseReport · OutboxJob (kind, payload, runAfter, attempts) · JobRun @@id([name, periodKey])
+// Small supporting tables: WebhookEvent @@id([provider, eventId]) · Notification (dedupeKey @unique,
+// type, payload, push/email delivery state; P4) · AbuseReport · OutboxJob (kind, payload, runAfter,
+// attempts) · JobRun @@id([name, periodKey]). FCM tokens live on Session.pushToken (P1), not in a
+// DeviceToken table: a signed-out device stops getting notifications.
 ```
 
 ---
@@ -326,7 +335,9 @@ model ShareLink {
      PUT; larger ones get an R2 multipart upload, opened at once, and `partSize`/`partCount`.
    - **Every presigned upload URL signs `Content-Length`**: R2 refuses a body of any other size. The
      SDK runs with checksums `WHEN_REQUIRED`, so no checksum parameters leak into the URLs.
-   - Deferred to P4, which has prices: the projected month-end bill in this response.
+   - Deferred to P4, then again to P5 (2026-10-27): the projected month-end bill in this response. It
+    only matters once an account can pass the free tier and has a limit; until then the billing
+    summary's projection covers it.
 2. `POST /api/v1/uploads/:id/parts { partNumbers }` returns presigned `UploadPart` URLs (≤ 1 h), up to 50
    per call, each signed for its part's exact size. R2 requires every part but the last to be the same
    size: 8 MiB, raised for very large files to stay under 10,000 parts.
@@ -371,8 +382,10 @@ event, −bytes), and its objects go through the outbox. A folder is never repla
   with the content), and the app's image loader caches by `contentId`. *Changed from the first plan*
   (presigned URLs embedded in listings): the app shows folders from its Room cache, filled by the sync
   feed, which can't hold URLs that expire in an hour.
-- Moved to P4 (it needs `UsageDay`): adding each download's size to `downloadBytes` for fair-use
-  monitoring. Downloads stay free in v1.
+- Moved to P4 (it needs `UsageDay`), then left out of it (2026-10-27): adding each download's size to
+  `downloadBytes` for fair-use monitoring. It needs a retention decision first: `UsageDay` survives
+  account deletion as a billing record, so it would keep download history too, which the
+  delete-account page doesn't list. Downloads stay free in v1.
 
 ### 5.3 Trash, purge and object deletion
 
@@ -458,6 +471,17 @@ charge(day)      = chargeable ÷ (10⁹ × 86,400) × pricePerGBMonth ÷ daysInT
 The exact charge is kept in micro-paise (`BigInt`), and the statement rounds once (half-up). Pricing per
 day of the actual month means flat usage costs exactly the advertised monthly price in every month.
 
+**As built (P4, 2026-10-27):**
+- The free allowance is per day, as the formula says: a day is billed only for its byte-seconds
+  above `freeBytes × 86,400`, so storage can swing within a day (4 GB for half a day is free).
+- The log is walked in id order (commit order: events are written under the user's row lock). An
+  event takes effect at max(its `at`, the previous event's effect), so time never runs backwards; one
+  that commits after its day was closed counts from the next day's start.
+- Each `UsageDay` records where the next day starts (`endBytes`, `lastEventId`), so a close resumes
+  from the newest closed day and never rewrites one: re-running it writes nothing. A day with nothing
+  stored and no events gets no row.
+- Prices come from the `PriceBook` row for the day's month (§7.1).
+
 **Worked example** (₹2.50/GB-month, 2 GB free, 30-day month). A user stores 10 GB for 20 days, then 30 GB
 for 10 days:
 
@@ -478,13 +502,17 @@ for 10 days:
 - a day with no events
 
 **Live numbers:**
-- **Month-to-date** = closed days + today so far, computed from the live counter.
+- **Month-to-date** = closed days + today so far, computed from the live counter. As built: the days
+  not closed yet are walked from the log exactly as the close will walk them, and today so far gets
+  the whole day's free allowance, so month-to-date is "the bill if the month ended now": it never
+  goes down, and equals the closed numbers once the day closes (`check:billing-db` compares them).
 - **Projection** = month-to-date + current bytes × remaining time × rate.
 
-Both are served by `GET /api/v1/billing/summary` and drive the cap alerts.
+Both are served by `GET /api/v1/billing/summary` and drive the cap alerts. Both include GST and any
+carried amount (§7.2): they are what auto-pay would be asked for.
 
-**Downloads** are metered (`UsageDay.downloadBytes`) but free, because R2 charges nothing for downloads. A
-fair-use price (e.g. above 3× stored) can be added later without a schema change.
+**Downloads** are free, because R2 charges nothing for downloads. Metering them
+(`UsageDay.downloadBytes`) for a later fair-use price (e.g. above 3× stored) is not built (§5.2).
 
 ---
 
@@ -493,7 +521,11 @@ fair-use price (e.g. above 3× stored) can be added later without a schema chang
 ### 7.1 Pricing and unit economics
 
 `PriceBook` rows are versioned by `effectiveFrom`. A price change applies from the next cycle, announced at
-least 30 days ahead (stated in the Terms). Example numbers, all to be decided (§13):
+least 30 days ahead (stated in the Terms). As built (P4): `effectiveFrom` is always the 1st of a month
+(a CHECK), so a month has one price, and an increase (a higher price per GB-month or a smaller free
+allowance) waits until the first month starting at least 30 days after its row was recorded,
+whatever its `effectiveFrom` says. The migration seeds the suggested defaults below as the first row,
+effective October 2026. Example numbers, all to be decided (§13):
 
 | Per GB-month | Amount |
 |---|---|
@@ -513,9 +545,16 @@ Per-user upload rate limits stop anyone from running them up.
   - `subtotal = round_half_up(Σ daily micro-paise)`
   - `GST = round_half_up(subtotal × 18%)`
   - `total = subtotal + GST + carriedIn`
-- A `STATEMENT −total` ledger entry is written.
+- A `STATEMENT −total` ledger entry is written. (Not in P4, which has no ledger: P5's settlement writes
+  it for each statement it collects.)
 - If the total is below the minimum debit (e.g. ₹10), the statement is `CARRIED` into next month instead of
   debited.
+
+As built (P4, `billing.closeCycle`): the job runs monthly from the 1st at 00:30 and bills every
+month that has ended and has no statement, oldest first, so an outage is caught up. A `CARRIED`
+total goes into the account's **next statement**, whenever that is (`carriedIntoId` records where):
+a month with no usage makes no statement just to carry it. A month whose charges come to under half
+a paisa (within the free tier) gets no statement. `OPEN` statements get a bill-ready notification.
 
 ### 7.3 Mandate setup and cap changes
 
@@ -547,6 +586,14 @@ Per-user upload rate limits stop anyone from running them up.
 Each notification is de-duplicated by `Notification.dedupeKey` (e.g. `cap100:{userId}:2026-10`). Reaching
 the cap **only notifies; uploads keep working**, as requested. A "stop uploads at my cap" switch can be
 added later.
+
+As built (P4): the keys carry the limit too (`limit100:{userId}:2026-10:10000`), so a changed limit
+re-arms its alerts. Reaching 80% and 100% in one check sends only the 100% alert (the 80% one is
+recorded as superseded, so it can't go out late), and the projection alert stops once the limit is
+passed. Notifications are made in the transaction they announce, with an outbox job that sends them;
+a channel without credentials, a device or an address is `SKIPPED` and logged, and one that keeps
+failing with errors that may pass is retried with backoff for 24 hours, then `FAILED`. FCM tokens
+reported dead are cleared from their sessions.
 
 ### 7.5 Settlement, excess and failures
 
@@ -645,10 +692,10 @@ user's state, collected at mandate setup. The CGST/SGST vs IGST split is worked 
 
 | Job | Schedule (IST) | What makes it safe to re-run |
 |---|---|---|
-| `metering.closeDay` | daily 00:10 | `UsageDay` primary key `(userId, day)` |
-| `billing.closeCycle` | 1st of the month, 00:30 | `Statement` unique `(userId, periodStart)` |
+| `metering.closeDay` | daily 00:10 | `UsageDay` primary key `(userId, day)`; resumes after the newest closed day (P4) |
+| `billing.closeCycle` | 1st of the month, 00:30 | `Statement` unique `(userId, periodStart)`; a missed run catches up later in the month (P4) |
 | `billing.settle` | after closeCycle, then hourly | `Payment` unique `(statementId, kind, attempt)` |
-| `billing.alerts` | hourly | `Notification.dedupeKey` |
+| `billing.alerts` | hourly | `Notification.dedupeKey` (P4) |
 | `billing.standing` | daily 09:00 | dated, forward-only transitions |
 | `payments.reconcile` | daily | re-fetches non-final payments from Razorpay |
 | `play.reportExternalTx` | every 15 min | `Payment.reportedToPlayAt` |
@@ -731,7 +778,7 @@ backup runs from the host cron, not the worker (§11).
 | **P1 Accounts** | Database and role on the host Postgres, Prisma and the `migrate` service (moved here from P0 because nothing reads a database before P1). Google sign-in, access + refresh sessions (D1), session list/revoke, push-token registration, account-deletion skeleton. | `check:auth` (pure) and `check:auth-db` (local database) pass: rotation, the lost-response retry window, reuse detection, idle expiry, revoke-others, re-auth for deletion. **Built, checked and deployed 2026-10-01** (Google sign-in configured 2026-10-26). |
 | **P2 Tree + sync** | Folders and files metadata, rename/move, trash/restore/purge, search, sync feed, plus the worker (D5) with trash auto-purge, tombstone compaction and expired-session cleanup | `check:tree` (pure) and `check:tree-db` (local database) pass: cycles, name conflicts, restore clashes, `ifSeq`, feed ordering and ties, compaction → resync, auto-purge, concurrency, job claims. **Built, checked and deployed 2026-10-09.** |
 | **P3 Data plane** | Upload sessions (single + multipart, resume), complete + verify, thumbnails, downloads, outbox deletes, sweeper, reconciliation, `StorageEvent` choke point | A 5 GB upload survives network drops and an app kill. `check:storage` invariants hold. **Built and checked 2026-10-22** (`check:storage` 13, `check:storage-db` 22: resume, crash recovery, races, purge, the outbox, reconciliation, 20,000-file scale). Live R2 behaviour is `check:r2-live`, run once the dev bucket exists. **Deployed 2026-10-23**; storage turned on 2026-10-26 (`check:r2-live` 5 against the dev bucket). |
-| **P4 Metering + statements** | Daily close, PriceBook, month-to-date and projection, monthly statements, FCM + SES, cap alerts | The `check:metering` worked examples match. Re-running a close changes nothing. Alerts fire once per cycle. |
+| **P4 Metering + statements** | Daily close, PriceBook, month-to-date and projection, monthly statements, FCM + SES, cap alerts | The `check:metering` worked examples match. Re-running a close changes nothing. Alerts fire once per cycle. **Built and checked 2026-10-27** (`check:metering` 18, `check:billing-db` 12: the ₹43.27 example end to end, re-run and racing closes, live = closed numbers, carry-forward, alerts once per month and limit, delivery skips/retries/give-up). Not deployed; push and email wait on their credentials (`docs/DEPLOY.md`). Left for P5: the upload response's projection (§5.1) and the ledger entry (§7.2); download metering awaits a decision (§5.2). |
 | **P5 Mandate billing** | Razorpay customer + mandate, webhooks, settlement (≤ cap, excess link, retry), standing state machine, cap change, cancellation, deletion → cancel mandate | Full cycle in Razorpay test mode, including replayed webhooks and a crash between "Payment row written" and "Razorpay called". `check:settlement` passes. |
 | **P6 Play compliance** | User choice billing enrollment, Play credit packs via RevenueCat into the ledger, alternative-billing reporting | Credits are used before the mandate. Each mandate payment is reported to Google. |
 | **P7 Share links** | Links, public page, App Links, limits, abuse reports, admin takedown | Privacy review signed off. Rate limits verified. |
@@ -744,7 +791,8 @@ real users needs P5 **and** P6.
 
 ## 13. Open decisions (suggested defaults)
 
-1. **Price and free tier:** ₹2.50/GB-month + GST above 2 GB free.
+1. **Price and free tier:** ₹2.50/GB-month + GST above 2 GB free. Seeded as the first `PriceBook` row
+   (with the ₹10 minimum of item 5); confirming other numbers is a new row (`docs/DEPLOY.md`).
 2. **Cap presets:** ₹100 (default), ₹250, ₹500, ₹1,000, or custom.
 3. **Over the cap:** debit the cap and send a payment link for the rest, due in 7 days. The alternative is
    to block uploads at the cap.

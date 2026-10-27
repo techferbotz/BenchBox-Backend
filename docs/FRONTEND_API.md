@@ -2,7 +2,7 @@
   Reference doc — the current contract the BenchBox app builds against.
   Source of truth: the backend repo's docs/FRONTEND_API.md. Mirrored to
   BenchBox-Contract/backend/API.md whenever a CHANGELOG entry says this file moved.
-  Last refreshed: 2026-10-26 (BE-007).
+  Last refreshed: 2026-10-27 (BE-009).
 -->
 
 # BenchBox — Frontend (Client) API
@@ -85,31 +85,32 @@ so they are listed together here:
   device.
 - **Sync is a change feed** (live since BE-003, §7) with an opaque cursor, designed for a local Room
   cache. No device clocks are involved anywhere.
+- **Pay-as-you-use billing** (BE-009, §10–11; not deployed yet: until a later BE entry says it is
+  live, `/api/v1/billing/*` answers `404 NOT_FOUND`). Storage is measured continuously and billed by the day,
+  each calendar month (India time), with GST. The app **never computes a charge**: it shows the amounts
+  the server sends, as paise strings. Until auto-pay exists (below), no account can store more than the
+  free allowance, so every amount is ₹0 and there are no statements yet; build the screens against the
+  real shapes anyway.
 
 ### Coming next (not built — plan the architecture, don't build against these shapes)
 
 Listed so screens and navigation can be planned. Endpoint names and fields **will** change; each part
 arrives as its own `BE-nnn` entry with the exact contract, and only then is it in this document.
 
-- **Pay-as-you-use billing.** Users pay monthly for the storage they actually kept, measured by the day.
-  Files in the trash count; thumbnails and unfinished uploads don't. 1 GB = 10⁹ bytes. The first GBs are
-  free (the free allowance is already in `GET /api/v1/me/storage`). The app **never computes a charge**:
-  it shows the amounts the server sends, as paise strings. Expect:
-  - a **billing summary**: month-to-date amount, projected month-end amount, the cap, the payment
-    method and the account standing;
-  - **usage history** by day, and **monthly statements** (closed on the 1st, India time), with GST;
-  - a **monthly cap** the user picks (₹100 by default, presets or a custom amount);
+- **The rest of billing.** The usage numbers, statements and alerts are built (§10–11). Still to come:
+  - a **monthly limit** the user picks (₹100 by default, presets or a custom amount). `limitPaise` in
+    the billing summary already has its place, and stays `null` until then;
   - **UPI AutoPay / card mandate** setup: the app opens a payment-provider link and the user approves
-    it in their UPI or card app; the server confirms it and the app refreshes;
-  - **payment links** for an unpaid or above-cap amount, opened in the browser;
+    it in their UPI or card app; the server confirms it and the app refreshes. Auto-pay lifts the
+    storage limit past the free allowance;
+  - **collecting statements**, and **payment links** for an unpaid or above-limit amount, opened in the
+    browser (statements then gain more `status` values);
   - an **account standing** (good, past due, suspended) that can block uploads but keeps downloads
-    working, so the app needs a banner and a "pay now" path.
+    working, so the app needs a banner and a "pay now" path;
+  - more notifications: debit succeeded or failed, payment due.
 - **Google Play credits.** Because of Play's policy for storage apps, the app shows Google's user-choice
   billing screen: "Google Play" (prepaid credit packs, bought in the app through Play) or "UPI AutoPay /
   card" (the mandate). Credits are used before the mandate is charged.
-- **Notifications** (FCM, the push token already registered through `PUT /api/v1/me/push-token`):
-  projected over the cap, 80% and 100% of the cap reached, bill ready, debit succeeded or failed. Each
-  will carry a type and a deep-link target. Reaching the cap only notifies; uploads keep working.
 - **Share links.** Share a file or folder as a link that expires (7 days by default) and can be revoked;
   recipients open a web page with no app needed. Android App Links will open it in the app when it's
   installed.
@@ -312,8 +313,8 @@ Returns the `user` object (same shape as in sign-in).
 | `usedBytes` | Everything the account stores, **the trash included**: a file counts until it is permanently deleted. |
 | `trashBytes` | The part of `usedBytes` that is in the trash. |
 | `uploadingBytes` | Reserved by uploads still in progress. |
-| `freeBytes` | The free allowance. |
-| `limitBytes` | The most the account may store right now. Until billing launches it equals `freeBytes`; `null` will mean no limit. |
+| `freeBytes` | The free allowance: the current price's (`price.freeBytes` in the billing summary, §10). |
+| `limitBytes` | The most the account may store right now. Until auto-pay launches it equals `freeBytes`; `null` will mean no limit. |
 
 ### `GET /api/v1/me/sessions`
 
@@ -360,7 +361,7 @@ its `google-services.json` for `com.ferbotz.benchbox` is `backend/google-service
 contract folder (BE-007). The file has no OAuth client entries, so sign-in keeps using the server
 client id from §4.
 
-Notifications themselves (usage alerts, bills) arrive in a later phase.
+What BenchBox sends, and how to route it, is in §11.
 
 ### `DELETE /api/v1/me` — delete the account
 
@@ -726,3 +727,179 @@ A stable URL per file, for your image loader:
 - Cache the image by the node's **`contentId`**. It changes only when the content does, so renames
   and moves keep the cached thumbnail (Coil: set `diskCacheKey` and `memoryCacheKey` to `contentId`).
 - `404` when the file has no thumbnail (`hasThumbnail: false`): show a placeholder for its type.
+
+---
+
+## 10. Billing (🔒)
+
+What the account is billed, worked out on the server. Show these amounts as they come.
+
+**How storage is billed:**
+- Every file counts, **the trash included**, from the moment its upload completes until it is
+  permanently deleted. Thumbnails and unfinished uploads don't count. 1 GB = 1,000,000,000 bytes.
+- Storage is measured continuously and totalled for each day, India time. Each day's **free allowance**
+  is `price.freeBytes` kept all day (2 GB-days at 2 GB): a day is billed only for what it used above
+  that. Storing 4 GB for half a day and nothing after is free.
+- A day costs the price per GB-month ÷ the days in that month, so a flat amount stored costs exactly the
+  monthly price in any month.
+- Bills are per calendar month (India time) and close on the 1st. The storage charge is rounded to the
+  paisa once, then GST is added. A bill below `price.minimumChargePaise` isn't charged on its own: it
+  is **carried** into the account's next bill.
+- Prices change only at the start of a month, and an increase only after 30 days' notice.
+- Until auto-pay exists (§2), no account can store more than the free allowance, so every amount is
+  `"0"` and there are no statements.
+
+### `GET /api/v1/billing/summary`
+
+For the Usage tab. Amounts are paise strings, sizes bytes, `month` and dates India time.
+
+```json
+{
+  "success": true,
+  "data": {
+    "asOf": "2026-11-15T06:30:00.000Z",
+    "month": "2026-11",
+    "periodStart": "2026-11-01",
+    "periodEnd": "2026-11-30",
+    "statementDate": "2026-12-01",
+    "storedBytes": 10000000000,
+    "price": { "paisePerGbMonth": "250", "freeBytes": 2000000000, "gstPercent": "18", "minimumChargePaise": "1000" },
+    "monthToDate": { "subtotalPaise": "958", "gstPaise": "172", "carriedInPaise": "0", "totalPaise": "1130" },
+    "projected": { "subtotalPaise": "2000", "gstPaise": "360", "carriedInPaise": "0", "totalPaise": "2360" },
+    "limitPaise": null,
+    "limitState": null,
+    "limitUsedPercent": null,
+    "lastStatement": null
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `month`, `periodStart`, `periodEnd` | The billing month in progress. |
+| `statementDate` | When this month's statement closes ("Your first statement arrives on 1 Dec"). |
+| `storedBytes` | Stored now, the trash included: what is being billed. |
+| `price` | The current price: per GB-month, the free allowance, the GST rate as a percentage string (`"18"`; it could be `"12.5"`), and the minimum charge. Use it for "₹2.50 per GB a month above your free 2 GB, plus GST". |
+| `monthToDate` | "This month so far": what the bill would be if the month ended now. `subtotalPaise` is storage, then `gstPaise`, and `carriedInPaise` from an earlier small bill. `totalPaise` is the sum. |
+| `projected` | "Estimated bill": the month's total if what is stored now stays until the month ends. |
+| `limitPaise` | The monthly auto-pay limit. Always `null` until auto-pay launches. |
+| `limitState` | With a limit: `on_track`, `projected_over` (the estimate is above the limit) or `over` (this month so far has reached it). `null` without a limit. |
+| `limitUsedPercent` | With a limit: this month so far as a whole percentage of it, rounded down. `null` without one. |
+| `lastStatement` | The newest statement (shape below), or `null`. |
+
+### `GET /api/v1/billing/usage?from=2026-11-01&to=2026-11-30`
+
+One entry per day, oldest first, for the daily-usage bars. Both dates are optional India-time dates:
+`to` defaults to today and never goes past it; `from` defaults to the 1st of `to`'s month. At most 366
+days per request.
+
+```json
+{
+  "success": true,
+  "data": {
+    "from": "2026-11-01",
+    "to": "2026-11-15",
+    "days": [
+      { "date": "2026-11-01", "averageBytes": 10000000000, "peakBytes": 10000000000, "endBytes": 10000000000, "chargePaise": "67", "complete": true },
+      { "date": "2026-11-15", "averageBytes": 10000000000, "peakBytes": 10000000000, "endBytes": 10000000000, "chargePaise": "25", "complete": false }
+    ]
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `averageBytes` | The bar's height: average bytes stored over the day (over the part that has passed, for today). |
+| `peakBytes`, `endBytes` | The most stored during the day, and what was stored at its end (now, for today). |
+| `chargePaise` | The day's charge, rounded to the paisa for display. A statement rounds the month's exact total once, so the days can add up to a paisa or two more or less than the bill. |
+| `complete` | `false` only for today, which isn't over: draw it lighter. |
+
+Days with nothing stored are there too, with zeros. A date that isn't a real `YYYY-MM-DD`, or a range
+over 366 days, gets `400 BAD_REQUEST`. A `from` after today returns no days.
+
+### `GET /api/v1/billing/statements?limit=&cursor=`
+
+The account's statements, newest first: `{ "items": [statement…], "nextCursor": "…" | null,
+"hasMore": bool }`, paged like folder listings (`limit` 1–100, default 24).
+
+### `GET /api/v1/billing/statements/{id}`
+
+One statement. Another account's id, or a malformed one, gets `404 NOT_FOUND`.
+
+**The statement:**
+
+```json
+{
+  "id": "6c1d0b7e-3f2a-4b8c-9d1e-2a3b4c5d6e7f",
+  "month": "2026-11",
+  "periodStart": "2026-11-01",
+  "periodEnd": "2026-11-30",
+  "status": "open",
+  "usage": { "gbDays": "500.00", "freeGbDays": "60.00", "billableGbDays": "440.00", "billableGbMonths": "14.67" },
+  "paisePerGbMonth": "250",
+  "gstPercent": "18",
+  "subtotalPaise": "3667",
+  "gstPaise": "660",
+  "carriedInPaise": "0",
+  "totalPaise": "4327",
+  "carriedIntoId": null,
+  "createdAt": "2026-11-30T19:00:00.120Z"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `status` | `open`: an amount to collect (collection arrives with auto-pay). `carried`: below the minimum charge, so it isn't charged on its own and its total goes into the next statement ("Carried forward"). More values arrive with payments (§2): show unknown ones neutrally. |
+| `usage` | The statement-detail lines, as decimal strings with two decimals: GB-days stored, the free allowance used, the billable GB-days, and those as GB-months (÷ the days in the month). |
+| `paisePerGbMonth`, `gstPercent` | The price the month was billed at. |
+| `subtotalPaise` | "Storage at ₹2.50 per GB a month". |
+| `gstPaise` | GST on the subtotal. One line for now: the CGST/SGST split needs the user's state, which arrives with auto-pay. |
+| `carriedInPaise` | An earlier statement's total carried into this one ("includes ₹6.20 carried in"). |
+| `totalPaise` | Subtotal + GST + carried in. |
+| `carriedIntoId` | For a `carried` statement: the statement its total went into, once there is one. |
+
+A month whose storage charge rounds to nothing (it stayed within the free allowance) has no statement.
+
+---
+
+## 11. Notifications (push and email)
+
+Billing alerts arrive as FCM notifications on every signed-in device that registered a push token
+(§5), and the important ones by email to the Google account's address too:
+
+| `type` | When | Push | Email | Open |
+|---|---|---|---|---|
+| `limit_alert` | This month so far reaches 80%, then 100%, of the monthly limit | ✓ | ✓ | Usage |
+| `projected_over_limit` | The estimated bill goes above the monthly limit | ✓ | — | Usage |
+| `statement_ready` | A statement closed with an amount to collect (not a `carried` one) | ✓ | ✓ | that statement |
+
+- Each alert is sent **once a month**, for that month's limit (a changed limit can alert again). When
+  80% and 100% are reached together, only the 100% one is sent.
+- Reaching the limit only notifies: uploads keep working.
+- The limit alerts need a monthly limit, which arrives with auto-pay (§2). Until then only
+  `statement_ready` can happen, and nothing is sent until the server's push and email credentials are
+  set up.
+
+**The FCM message** carries a `notification` (title and body, ready to show) and `data` for routing,
+all strings:
+
+```json
+{
+  "notification": { "title": "Your November bill is ₹43.27", "body": "Open BenchBox to see the statement." },
+  "data": {
+    "type": "statement_ready",
+    "notificationId": "0b6c2d1e-7f3a-4c5b-9e8d-1a2b3c4d5e6f",
+    "month": "2026-11",
+    "statementId": "6c1d0b7e-3f2a-4b8c-9d1e-2a3b4c5d6e7f"
+  },
+  "android": { "priority": "high", "notification": { "channelId": "billing" } }
+}
+```
+
+- `data.percent` (`"80"` or `"100"`) comes with `limit_alert`; `data.statementId` with
+  `statement_ready` (load it with `GET /api/v1/billing/statements/{statementId}`).
+- Ignore a `type` you don't know: more arrive with payments.
+- Create an Android notification channel with id **`billing`** (for example "Bills and usage") at
+  startup. The messages name it; without it, Android uses the fallback channel.
+- While the app is in the foreground, FCM hands the message to your messaging service instead of
+  showing it: show it yourself, or refresh the Usage tab.

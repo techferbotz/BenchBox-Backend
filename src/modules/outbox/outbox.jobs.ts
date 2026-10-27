@@ -2,9 +2,9 @@ import { UPLOAD_CLEANUP_DELAY_SECONDS } from "../files/files.policy";
 import { accountPrefixes } from "../files/files.rules";
 
 // The outbox's job kinds: work that must happen after a transaction commits and must not be lost —
-// today, removing bytes from R2. A job is queued in the same transaction as the change that needs
-// it and retried until it succeeds; every kind is idempotent, so running one twice is harmless.
-// Pure: no database, no network (check:storage pins the builders and the backoff).
+// removing bytes from R2, sending notifications. A job is queued in the same transaction as the
+// change that needs it and retried until it succeeds; every kind is idempotent, so running one
+// twice is harmless. Pure: no database, no network (check:storage pins the builders and the backoff).
 
 export type OutboxJob =
   /** Delete these objects (≤ 1000): purged files and their thumbnails. */
@@ -12,10 +12,23 @@ export type OutboxJob =
   /** An upload that ended without a file: abort its multipart upload, then delete what landed. */
   | { kind: "CLEANUP_UPLOAD"; payload: { key: string; thumbKey: string; uploadId: string | null } }
   /** Everything under a prefix — a deleted account's objects and unfinished uploads. */
-  | { kind: "DELETE_PREFIX"; payload: { prefix: string } };
+  | { kind: "DELETE_PREFIX"; payload: { prefix: string } }
+  /** Send a notification's pending channels (push, email). */
+  | { kind: "SEND_NOTIFICATION"; payload: { notificationId: string } };
 
 /** A job to queue: not before `runAfter`. */
 export type OutboxJobInput = OutboxJob & { runAfter: Date };
+
+/** The kinds that need object storage. Without it they wait; the others still run. */
+export const STORAGE_JOB_KINDS: readonly OutboxJob["kind"][] = ["DELETE_OBJECTS", "CLEANUP_UPLOAD", "DELETE_PREFIX"];
+export const NON_STORAGE_JOB_KINDS: readonly OutboxJob["kind"][] = ["SEND_NOTIFICATION"];
+
+/** Send a notification once the transaction that made it commits. */
+export const notificationJob = (notificationId: string, now: Date): OutboxJobInput => ({
+  kind: "SEND_NOTIFICATION",
+  payload: { notificationId },
+  runAfter: now,
+});
 
 const MAX_KEYS_PER_DELETE = 1000;
 
@@ -72,6 +85,9 @@ export const parseOutboxJob = (kind: string, payload: unknown): OutboxJob => {
   }
   if (kind === "DELETE_PREFIX" && typeof p.prefix === "string" && /^[ut]\/[0-9a-f-]{36}\/$/.test(p.prefix)) {
     return { kind, payload: { prefix: p.prefix } };
+  }
+  if (kind === "SEND_NOTIFICATION" && typeof p.notificationId === "string" && /^[0-9a-f-]{36}$/.test(p.notificationId)) {
+    return { kind, payload: { notificationId: p.notificationId } };
   }
   throw new Error(`Unreadable outbox job of kind ${kind}`);
 };

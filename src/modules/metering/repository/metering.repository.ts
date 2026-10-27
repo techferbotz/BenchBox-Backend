@@ -1,10 +1,111 @@
-import { NodeKind, Prisma, UploadState } from "@prisma/client";
+import { NodeKind, PriceBook, Prisma, UploadState } from "@prisma/client";
+import { dateColumn, fromDateColumn } from "../../../common/time";
 import { prisma } from "../../../prisma/client";
+import { lockUserRow } from "../../../prisma/sql";
+import { byteMsToSeconds, MeterEvent, PriceBookRow, secondsToByteMs } from "../metering.rules";
 
-// Metering's database access. Bills (P4) are computed from the StorageEvent log, so this file owns
-// the one function allowed to change how many bytes a user stores.
+// Metering's database access. Bills are computed from the StorageEvent log, so this file owns the
+// one function allowed to change how many bytes a user stores, and the daily close that turns the
+// log into UsageDays.
 
 export type StorageChangeReason = "UPLOAD" | "REPLACE" | "PURGE" | "ACCOUNT_DELETE" | "ADMIN";
+
+/** A closed day (UsageDay), with byte-seconds as exact byte-milliseconds. */
+export interface UsageDayRow {
+  day: string;
+  byteMs: bigint;
+  billableByteMs: bigint;
+  peakBytes: bigint;
+  endBytes: bigint;
+  lastEventId: bigint;
+  chargeMicroPaise: bigint;
+  priceBookId: string;
+}
+
+type UsageDayRecord = {
+  day: Date;
+  byteSeconds: Prisma.Decimal;
+  billableByteSeconds: Prisma.Decimal;
+  peakBytes: bigint;
+  endBytes: bigint;
+  lastEventId: bigint;
+  chargeMicroPaise: bigint;
+  priceBookId: string;
+};
+
+const toUsageDayRow = (row: UsageDayRecord): UsageDayRow => ({
+  day: fromDateColumn(row.day),
+  byteMs: secondsToByteMs(row.byteSeconds.toFixed(3)),
+  billableByteMs: secondsToByteMs(row.billableByteSeconds.toFixed(3)),
+  peakBytes: row.peakBytes,
+  endBytes: row.endBytes,
+  lastEventId: row.lastEventId,
+  chargeMicroPaise: row.chargeMicroPaise,
+  priceBookId: row.priceBookId,
+});
+
+const toPriceBookRow = (book: PriceBook): PriceBookRow => ({
+  id: book.id,
+  effectiveFrom: fromDateColumn(book.effectiveFrom),
+  storagePaisePerGbMonth: book.storagePaisePerGbMonth,
+  freeBytes: book.freeBytes,
+  gstBasisPoints: book.gstBasisPoints,
+  minimumChargePaise: book.minimumChargePaise,
+  createdAt: book.createdAt,
+});
+
+const eventsAfter = async (db: Prisma.TransactionClient, userId: string, afterId: bigint, take: number): Promise<MeterEvent[]> =>
+  db.storageEvent.findMany({
+    where: { userId, id: { gt: afterId } },
+    orderBy: { id: "asc" },
+    take,
+    select: { id: true, at: true, totalAfter: true },
+  });
+
+/** The daily close for one account, inside a transaction holding its row lock. */
+export class MeterTx {
+  constructor(
+    private readonly tx: Prisma.TransactionClient,
+    readonly userId: string
+  ) {}
+
+  /** The account's newest closed day: where the next close resumes. */
+  async lastDay(): Promise<UsageDayRow | null> {
+    const row = await this.tx.usageDay.findFirst({ where: { userId: this.userId }, orderBy: { day: "desc" } });
+    return row ? toUsageDayRow(row) : null;
+  }
+
+  /** The account's StorageEvents after `afterId`, in id (commit) order. */
+  async eventsAfter(afterId: bigint, take: number): Promise<MeterEvent[]> {
+    return eventsAfter(this.tx, this.userId, afterId, take);
+  }
+
+  async addDays(rows: readonly UsageDayRow[]): Promise<void> {
+    if (rows.length === 0) return;
+    await this.tx.usageDay.createMany({
+      data: rows.map((row) => ({
+        userId: this.userId,
+        day: dateColumn(row.day),
+        byteSeconds: byteMsToSeconds(row.byteMs),
+        billableByteSeconds: byteMsToSeconds(row.billableByteMs),
+        peakBytes: row.peakBytes,
+        endBytes: row.endBytes,
+        lastEventId: row.lastEventId,
+        chargeMicroPaise: row.chargeMicroPaise,
+        priceBookId: row.priceBookId,
+      })),
+    });
+  }
+
+  /** The closed days from `from` to `to`, inclusive, oldest first. */
+  async daysBetween(from: string, to: string): Promise<UsageDayRow[]> {
+    const rows = await this.tx.usageDay.findMany({
+      where: { userId: this.userId, day: { gte: dateColumn(from), lte: dateColumn(to) } },
+      orderBy: { day: "asc" },
+    });
+    return rows.map(toUsageDayRow);
+  }
+}
 
 /** Metering inside an open transaction. */
 export class MeteringTx {
@@ -56,6 +157,67 @@ export interface AccountingRow {
 }
 
 export class MeteringRepository {
+  /** Every price book (a handful of rows), for priceBookFor() to choose from. */
+  async priceBooks(): Promise<PriceBookRow[]> {
+    const books = await prisma.priceBook.findMany({ orderBy: { effectiveFrom: "asc" } });
+    return books.map(toPriceBookRow);
+  }
+
+  /**
+   * Run `fn` holding the account's row lock: one account's close is serialised with its storage
+   * changes and with any other close. Null-safe for a deleted account (its row stays).
+   */
+  async inAccountLock<T>(userId: string, fn: (meter: MeterTx) => Promise<T>): Promise<T> {
+    return prisma.$transaction(
+      async (tx) => {
+        await lockUserRow(tx, userId);
+        return fn(new MeterTx(tx, userId));
+      },
+      { maxWait: 10_000, timeout: 60_000 }
+    );
+  }
+
+  /**
+   * Accounts with days to close through `through`: something still stored after their newest
+   * closed day, or storage events it hasn't taken in. Paged by id.
+   */
+  async accountsToClose(through: string, afterUserId: string | null, take: number): Promise<string[]> {
+    const rows = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT u."id" FROM "User" u
+      LEFT JOIN LATERAL (
+        SELECT d."day", d."endBytes", d."lastEventId" FROM "UsageDay" d
+        WHERE d."userId" = u."id" ORDER BY d."day" DESC LIMIT 1
+      ) last ON TRUE
+      WHERE (${afterUserId}::uuid IS NULL OR u."id" > ${afterUserId}::uuid)
+        AND (last."day" IS NULL OR last."day" < ${through}::date)
+        AND (COALESCE(last."endBytes", 0) > 0
+          OR EXISTS (SELECT 1 FROM "StorageEvent" e
+                     WHERE e."userId" = u."id" AND e."id" > COALESCE(last."lastEventId", 0)))
+      ORDER BY u."id"
+      LIMIT ${take}`;
+    return rows.map((row) => row.id);
+  }
+
+  /**
+   * The account's closed days from `from` on, and its newest closed day (from any month), read in
+   * ONE statement: a close committing meanwhile can't make the two disagree.
+   */
+  async closedDaysSince(userId: string, from: string): Promise<{ days: UsageDayRow[]; last: UsageDayRow | null }> {
+    const rows = await prisma.$queryRaw<UsageDayRecord[]>`
+      SELECT "day", "byteSeconds", "billableByteSeconds", "peakBytes", "endBytes", "lastEventId", "chargeMicroPaise", "priceBookId"
+      FROM "UsageDay"
+      WHERE "userId" = ${userId}::uuid
+        AND ("day" >= ${from}::date OR "day" = (SELECT MAX("day") FROM "UsageDay" WHERE "userId" = ${userId}::uuid))
+      ORDER BY "day"`;
+    const days = rows.map(toUsageDayRow);
+    return { days: days.filter((day) => day.day >= from), last: days[days.length - 1] ?? null };
+  }
+
+  /** The account's StorageEvents after `afterId`, in id (commit) order. */
+  async eventsAfter(userId: string, afterId: bigint, take: number): Promise<MeterEvent[]> {
+    return eventsAfter(prisma, userId, afterId, take);
+  }
+
   /** What an account stores, how much of it is in the trash, and what unfinished uploads reserve. */
   async usage(userId: string): Promise<StorageUsageRow | null> {
     const user = await prisma.user.findFirst({ where: { id: userId, deletedAt: null }, select: { storedBytes: true } });

@@ -39,11 +39,15 @@ model User {
   /// bytes, under this row's lock.
   storedBytes BigInt    @default(0)
 
-  sessions      Session[]
-  nodes         Node[]
-  uploads       UploadSession[]
-  blobs         Blob[]
-  storageEvents StorageEvent[]
+  sessions       Session[]
+  nodes          Node[]
+  uploads        UploadSession[]
+  blobs          Blob[]
+  storageEvents  StorageEvent[]
+  usageDays      UsageDay[]
+  statements     Statement[]
+  billingAccount BillingAccount?
+  notifications  Notification[]
 }
 
 enum NodeKind {
@@ -204,12 +208,162 @@ model StorageEvent {
   @@index([userId, at])
 }
 
+/// Prices, versioned by the IST month they take effect in (docs/BACKEND_PLAN.md §7.1). Data, not
+/// constants: the numbers are suggested defaults the owner hasn't confirmed (§13), so a confirmed
+/// price is a new row, not a deploy. A row prices every day from `effectiveFrom` until a later row
+/// takes over, except that a price INCREASE never applies before PRICE_CHANGE_NOTICE_DAYS after it
+/// was recorded (metering.rules.ts). Never edit a row that has priced a day: add a new one.
+model PriceBook {
+  id                     String   @id @default(uuid()) @db.Uuid
+  /// The IST date it takes effect: always the 1st of a month (a CHECK constraint), so a month has
+  /// one price.
+  effectiveFrom          DateTime @unique @db.Date
+  /// 250 = ₹2.50 per GB-month (1 GB = 10⁹ bytes).
+  storagePaisePerGbMonth BigInt
+  /// Free storage. Each day is billed only for its byte-seconds above freeBytes × 86,400, and an
+  /// account without auto-pay may store at most this much (the storage allowance).
+  freeBytes              BigInt
+  /// 1800 = 18% GST.
+  gstBasisPoints         Int
+  /// A statement whose total is below this is carried into the account's next statement instead
+  /// of being charged.
+  minimumChargePaise     BigInt
+  /// Why the row exists: the decision or the announcement behind it.
+  note                   String?
+  /// When it was recorded: a price increase's notice period starts here.
+  createdAt              DateTime @default(now())
+
+  usageDays  UsageDay[]
+  statements Statement[]
+}
+
+/// One account's metered storage for one IST day, written once by the daily close
+/// (metering.closeDay) from the StorageEvent log and never changed, so re-running a close writes
+/// nothing. A day with nothing stored and no change has no row.
+model UsageDay {
+  userId              String   @db.Uuid
+  /// The IST calendar date.
+  day                 DateTime @db.Date
+  /// ∫ stored bytes dt over the day. Exact: event times are milliseconds, hence three decimals.
+  byteSeconds         Decimal  @db.Decimal(38, 3)
+  /// The part of byteSeconds above the day's free allowance (freeBytes × 86,400), or 0.
+  billableByteSeconds Decimal  @db.Decimal(38, 3)
+  peakBytes           BigInt
+  /// Stored bytes when the day ended: where the next day starts.
+  endBytes            BigInt
+  /// The last StorageEvent the day took in; the next day reads the log after it.
+  lastEventId         BigInt
+  /// The exact charge, in millionths of a paisa (half-up). A statement rounds the month's sum once.
+  chargeMicroPaise    BigInt
+  priceBookId         String   @db.Uuid
+  /// When the close wrote it.
+  createdAt           DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  priceBook PriceBook @relation(fields: [priceBookId], references: [id])
+
+  @@id([userId, day])
+}
+
+enum StatementStatus {
+  /// To be collected (P5's settlement).
+  OPEN
+  /// Below the minimum charge: its total goes into the account's next statement (`carriedIntoId`
+  /// says which, once there is one).
+  CARRIED
+}
+
+/// One account's bill for one IST calendar month, closed on the 1st (billing.closeCycle) from the
+/// month's UsageDays. Never changed once made, except to record where a carried total went. Kept
+/// after the account is deleted (the delete-account page's billing records).
+model Statement {
+  id                     String          @id @default(uuid()) @db.Uuid
+  userId                 String          @db.Uuid
+  /// The month: its first and last IST dates.
+  periodStart            DateTime        @db.Date
+  periodEnd              DateTime        @db.Date
+  /// The month's byte-seconds, and the part above each day's free allowance.
+  byteSeconds            Decimal         @db.Decimal(38, 3)
+  billableByteSeconds    Decimal         @db.Decimal(38, 3)
+  /// The price book that priced the month, with its numbers copied so the statement explains itself.
+  priceBookId            String          @db.Uuid
+  storagePaisePerGbMonth BigInt
+  gstBasisPoints         Int
+  minimumChargePaise     BigInt
+  /// round_half_up(Σ the days' micro-paise): the month's storage charge.
+  subtotalPaise          BigInt
+  /// round_half_up(subtotal × GST rate).
+  gstPaise               BigInt
+  /// An earlier statement's total that was below the minimum charge, carried into this one.
+  carriedInPaise         BigInt
+  totalPaise             BigInt
+  status                 StatementStatus
+  /// A CARRIED statement: the later statement its total went into. Null until there is one.
+  carriedIntoId          String?         @unique @db.Uuid
+  createdAt              DateTime        @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  priceBook PriceBook @relation(fields: [priceBookId], references: [id])
+
+  @@unique([userId, periodStart])
+}
+
+/// How an account pays. For now only the monthly limit, which the usage alerts measure against; P5
+/// adds the auto-pay mandate that sets it (the limit is the mandate's maximum) and the balance.
+model BillingAccount {
+  userId            String   @id @db.Uuid
+  /// The monthly auto-pay limit, in paise. Null: no limit, so no usage alerts.
+  monthlyLimitPaise BigInt?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum DeliveryState {
+  /// This kind of notification doesn't use the channel.
+  NONE
+  /// Not sent yet: waiting for the outbox, or retrying an error that may pass.
+  PENDING
+  SENT
+  /// Not sent, on purpose: the channel isn't configured, there's nowhere to send it (no device,
+  /// no email address), or a bigger alert superseded it.
+  SKIPPED
+  /// Gave up: a permanent error, or the retries ran out.
+  FAILED
+}
+
+/// A billing alert to the user (docs/BACKEND_PLAN.md §7.4): push (FCM) and/or email (SES), sent
+/// through the outbox. `dedupeKey` is unique, so each alert is made, and sent, at most once.
+model Notification {
+  id          String        @id @default(uuid()) @db.Uuid
+  userId      String        @db.Uuid
+  /// What makes it once-only, e.g. "limit80:{userId}:2026-10:10000" (that month, that limit) or
+  /// "statement:{statementId}".
+  dedupeKey   String        @unique
+  /// LIMIT_80 | LIMIT_100 | PROJECTED_OVER_LIMIT | STATEMENT_READY
+  type        String
+  /// What the message says: amounts as paise strings, the month, the statement's id.
+  payload     Json
+  push        DeliveryState
+  email       DeliveryState
+  /// Why a channel was skipped or failed, for whoever looks.
+  pushDetail  String?
+  emailDetail String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
 /// Work to do after a transaction commits, retried until it succeeds: deleting objects from R2,
-/// aborting unfinished multipart uploads. Queued in the same transaction as the change that needs
-/// it, so it can't be lost; drained every minute by the worker.
+/// aborting unfinished multipart uploads, sending notifications. Queued in the same transaction as
+/// the change that needs it, so it can't be lost; drained every minute by the worker.
 model OutboxJob {
   id        BigInt   @id @default(autoincrement())
-  /// DELETE_OBJECTS | CLEANUP_UPLOAD | DELETE_PREFIX
+  /// DELETE_OBJECTS | CLEANUP_UPLOAD | DELETE_PREFIX | SEND_NOTIFICATION
   kind      String
   payload   Json
   /// Not before this. A claimed job's lease also lives here.

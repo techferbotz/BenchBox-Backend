@@ -32,12 +32,13 @@ export class OutboxRepository {
     if (jobs.length > 0) await prisma.outboxJob.createMany({ data: toRows(jobs) });
   }
 
-  /** Claim up to `take` due jobs, hiding them until `leaseUntil`. */
-  async claim(now: Date, leaseUntil: Date, take: number): Promise<ClaimedJob[]> {
+  /** Claim up to `take` due jobs — of these kinds only, unless `kinds` is null — hiding them until `leaseUntil`. */
+  async claim(now: Date, leaseUntil: Date, take: number, kinds: readonly string[] | null = null): Promise<ClaimedJob[]> {
+    const ofKinds = kinds ? Prisma.sql`AND "kind" = ANY(${[...kinds]}::text[])` : Prisma.empty;
     return prisma.$queryRaw<ClaimedJob[]>`
       UPDATE "OutboxJob" SET "runAfter" = ${utc(leaseUntil)}, "attempts" = "attempts" + 1
       WHERE "id" IN (
-        SELECT "id" FROM "OutboxJob" WHERE "runAfter" <= ${utc(now)}
+        SELECT "id" FROM "OutboxJob" WHERE "runAfter" <= ${utc(now)} ${ofKinds}
         ORDER BY "runAfter", "id" LIMIT ${take}
         FOR UPDATE SKIP LOCKED
       )
@@ -67,6 +68,11 @@ export class OutboxRepository {
       prisma.outboxJob.count({ where: { lastError: { not: null } } }),
     ]);
     return { count, oldest: oldest?.createdAt ?? null, failing };
+  }
+
+  /** How many jobs of these kinds are waiting. */
+  async countOfKinds(kinds: readonly string[]): Promise<number> {
+    return prisma.outboxJob.count({ where: { kind: { in: [...kinds] } } });
   }
 }
 

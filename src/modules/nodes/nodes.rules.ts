@@ -110,6 +110,9 @@ const decode = (raw: unknown): Record<string, unknown> | undefined => {
   return value as Record<string, unknown>;
 };
 
+/** The same opaque format, for other listings (statements). */
+export { encode as encodeCursor, decode as decodeCursor, invalidCursor };
+
 /** Children are listed folders first, each kind by name. The cursor says which kind it's in. */
 export interface ChildrenCursor {
   phase: "FOLDER" | "FILE";

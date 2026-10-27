@@ -57,6 +57,11 @@ This page covers BenchBox's setup on the box and its project-specific steps.
     fix was deployed the same day (commit `c714af5`, box at `56f23a9`; no migration).
 
   The tokens were pasted into a chat session: roll them when convenient (R2 setup, below).
+- **2026-10-27 — P4 built, not deployed** (BE-009): metering's daily close and price book, monthly
+  statements, the billing endpoints, and usage alerts by push and email. Deploying it waits on the
+  owner's OK ([P4 deploy](#p4-deploy-metering-statements-alerts-runbook-not-run-yet)). Push and email
+  stay off, skipped and logged, until their credentials exist ([FCM](#push-fcm-setup-human),
+  [SES](#email-ses-setup-human)).
 
 ## Who does what
 
@@ -90,7 +95,10 @@ access or touches an account. Claude prepares the exact steps for each.
 | Google OAuth Android client for the debug key: `com.ferbotz.benchbox` + its SHA-1 (APP-001) | app side, then human | done 2026-10-26 |
 | Another Android client for each further key (release, Play app signing), from its `APP-nnn` request | app side, then human | when each SHA-1 arrives |
 | Firebase project `benchbox-75a31` (number `339320620607`) with the Android app; `google-services.json` to the app through the contract (BE-007) | human, then Claude | done 2026-10-26 |
-| FCM sending credential for the server (a Firebase service account) | human | P4 |
+| FCM sending credential for the server: a service account with only the FCM role, its JSON key's three fields into the details doc ([Push (FCM) setup](#push-fcm-setup-human)) | human | pending (P4 built) |
+| SES: a verified sending domain (DKIM records in Cloudflare), production access, and a send-only IAM user's keys into the details doc ([Email (SES) setup](#email-ses-setup-human)) | human (IAM + DNS + console, protocol 02) | pending (P4 built) |
+| P4 deploy: migrate, rebuild app + worker | Claude, over SSH, with the owner's OK | pending |
+| `FCM_*` / `SES_*` from the details doc into the server `.env`, never displayed; recreate app + worker | Claude | after each credential exists |
 | Rename switch on the box, with the P3 deploy (runbook below) | Claude, over SSH | done 2026-10-23 |
 | Old domain: its DNS record was renamed, so no redirect; old nginx site and certificate removed, old images removed | Claude | done 2026-10-23 |
 
@@ -397,9 +405,102 @@ In the Cloudflare account that already hosts `ferbotz.com`:
 No CORS rule is needed: the Android app isn't a browser. The share pages (P7) will need one only if
 they fetch files with JavaScript.
 
+## P4 deploy: metering, statements, alerts (runbook, not run yet)
+
+A schema change (`PriceBook`, `UsageDay`, `Statement`, `BillingAccount`, `Notification`), so migrate
+first. The migration also **seeds the price book** with the suggested defaults (₹2.50 per GB-month,
+2 GB free, 18% GST, ₹10 minimum, from October 2026): the storage allowance now comes from it. Nothing
+new is required in `.env`: without `FCM_*` and `SES_*`, alerts are recorded and their sending skipped.
+
+```bash
+cd /opt/apps/benchbox/BenchBox-Backend && git pull
+df -h / && docker system df                               # room for two image builds? (firebase-admin adds ~60 MB)
+docker compose -f docker-compose.prod.yml run --rm --build migrate </dev/null
+docker compose -f docker-compose.prod.yml up -d --build app worker </dev/null
+
+# verify
+curl -s https://benchbox.ferbotz.com/api/v1/billing/summary                # 401 UNAUTHORIZED (route exists)
+docker compose -f docker-compose.prod.yml logs --tail=30 worker             # nine jobs; "notifications: push not configured…, email not configured…"
+```
+
+On start the worker runs `metering.closeDay` (it is past 00:10) and `billing.closeCycle` (a monthly job
+is due all month): the close writes every account's days since its first upload, all ₹0 (nobody can
+store past the free tier yet), and the statement close finds no month to bill. Then check the
+`JobRun` rows: `metering.closeDay`, `billing.closeCycle` and `billing.alerts` SUCCEEDED.
+
+**Turning on push or email** (once its credentials exist): Claude appends the lines to the server
+`.env` from the details doc without displaying them, then recreates both services
+(`docker compose -f docker-compose.prod.yml up -d app worker </dev/null`; only the worker sends, but
+they share the `.env`). A partial set fails the boot on purpose (`FCM is partly configured…`), so check
+the logs; the worker's start line then says `push via FCM` / `email via SES`.
+
+### Changing the price
+
+Prices are rows, not code. **Add a row; never edit one that has priced a day** (`UsageDay.priceBookId`
+and each statement point at it). `effectiveFrom` must be the 1st of a month (a CHECK refuses anything
+else). An increase — a higher price per GB-month or a smaller free allowance — takes effect from the
+first month starting at least 30 days after the row is recorded (`createdAt`), whatever its
+`effectiveFrom` says, because the Terms promise that notice; announce it to users at the same time. A
+decrease can start on any coming 1st. Add the row before its month starts:
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T app node -e '
+const { PrismaClient } = require("@prisma/client"); const p = new PrismaClient();
+p.priceBook.create({ data: { effectiveFrom: new Date("2027-01-01T00:00:00Z"), storagePaisePerGbMonth: 250n,
+  freeBytes: 2000000000n, gstBasisPoints: 1800, minimumChargePaise: 1000n, note: "Confirmed by the owner on …" } })
+  .then((b) => console.log(b.id, b.effectiveFrom)).finally(() => p.$disconnect())' </dev/null
+```
+
+### Push (FCM) setup (human)
+
+In the Google Cloud console of the Firebase project `benchbox-75a31`:
+
+1. **IAM & Admin → Service accounts → Create service account**: `benchbox-push`, with the single role
+   **Firebase Cloud Messaging API Admin** (not the default `firebase-adminsdk` account, which can do
+   far more).
+2. The account → **Keys → Add key → JSON**. A key file downloads.
+3. Put its `project_id`, `client_email` and `private_key` in a new **FCM** section of
+   `G:\My Drive\BenchBox\BenchBox details.md` as `FCM_PROJECT_ID=…`, `FCM_CLIENT_EMAIL=…` and
+   `FCM_PRIVATE_KEY="…"` (the key on one line, its line breaks written `\n`, in double quotes), and in
+   the HOA credentials registry. Delete the downloaded file. Never paste the key into chat.
+
+Claude then moves the three lines into the server `.env` as above.
+
+### Email (SES) setup (human)
+
+Protocol 02: identities, IAM and DNS are human-run. In `ap-south-1` (Mumbai):
+
+1. **Pick the From address**: suggested `BenchBox <billing@ferbotz.com>`. Its domain must be verified.
+2. **Verify the domain**: SES → Identities → Create identity → Domain `ferbotz.com` (skip if another
+   House of Apps project verified it), Easy DKIM, RSA 2048. Add the three DKIM CNAME records it shows in
+   the Cloudflare dashboard (DNS only), and wait for "Verified".
+3. **Production access**: SES → Account dashboard → Request production access (transactional mail,
+   website `https://benchbox.ferbotz.com`, use: "billing alerts and monthly statements to our own
+   users"). Until it is granted SES only sends to verified addresses.
+4. **A send-only IAM user** (not the box's instance role, which every app on the box shares):
+
+   ```bash
+   aws iam create-user --user-name benchbox-ses
+   aws iam put-user-policy --user-name benchbox-ses --policy-name benchbox-ses-send --policy-document '{
+     "Version": "2012-10-17",
+     "Statement": [{
+       "Effect": "Allow",
+       "Action": "ses:SendEmail",
+       "Resource": "arn:aws:ses:ap-south-1:<account id>:identity/ferbotz.com",
+       "Condition": { "StringEquals": { "ses:FromAddress": "billing@ferbotz.com" } }
+     }]
+   }'
+   aws iam create-access-key --user-name benchbox-ses
+   ```
+
+5. Put `SES_REGION=ap-south-1`, `SES_FROM=BenchBox <billing@ferbotz.com>`, `SES_ACCESS_KEY_ID` and
+   `SES_SECRET_ACCESS_KEY` in a new **SES** section of the details doc and in the credentials registry.
+
+Claude then moves the four lines into the server `.env` as above.
+
 ## Later phases add
 
-- **P4/P5:** FCM, SES and Razorpay credentials.
+- **P5:** Razorpay credentials.
 
 ## Standard deploys
 

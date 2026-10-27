@@ -98,8 +98,8 @@ export class UploadsService {
     if (input.thumbnailSize !== null && (input.thumbnailSize < 1 || input.thumbnailSize > MAX_THUMBNAIL_BYTES)) {
       throw new BadRequestError(`"thumbnail.size" must be from 1 to ${MAX_THUMBNAIL_BYTES} bytes`);
     }
-    const allowance = await meteringService.storageAllowance(userId);
     const now = this.deps.now();
+    const allowance = await meteringService.storageAllowance(userId, now);
     const plan = planUpload(input.size);
     const size = BigInt(input.size);
 

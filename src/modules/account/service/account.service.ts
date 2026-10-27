@@ -88,7 +88,7 @@ export class AccountService {
 
   /** GET /api/v1/me/storage: what the account stores and may store. */
   async storageUsage(userId: string): Promise<StorageUsageDto> {
-    return meteringService.usage(userId);
+    return meteringService.usage(userId, this.deps.now());
   }
 }
 

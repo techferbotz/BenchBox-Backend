@@ -11,7 +11,14 @@
  * fill every TODO before publishing.
  */
 
+import {
+  LIMIT_ALERT_PERCENTS,
+  PAST_DUE_TO_SUSPENDED_DAYS,
+  PAYMENT_DUE_DAYS,
+  SUSPENDED_TO_DELETION_DAYS,
+} from "../billing/billing.policy";
 import { DELETION_STORAGE_PURGE_DAYS } from "../files/files.policy";
+import { PRICE_CHANGE_NOTICE_DAYS } from "../metering/metering.policy";
 import { TRASH_RETENTION_DAYS } from "../nodes/nodes.policy";
 
 // ── Shared across all documents (edit in one place) ──
@@ -35,7 +42,7 @@ export const LEGAL_PATHS = {
 // ── Per-document ──
 // Bump on each material change.
 export const PRIVACY_EFFECTIVE_DATE = "October 22, 2026";
-export const TERMS_EFFECTIVE_DATE = "October 22, 2026";
+export const TERMS_EFFECTIVE_DATE = "October 27, 2026";
 export const DELETE_ACCOUNT_EFFECTIVE_DATE = "October 22, 2026";
 // TODO(legal): set the governing jurisdiction (e.g. "India", with the courts of a named city).
 export const TERMS_GOVERNING_LAW = "[your jurisdiction]";
@@ -44,8 +51,8 @@ export const TERMS_GOVERNING_LAW = "[your jurisdiction]";
 export const MINIMUM_AGE = 18;
 
 // ── Public promises. Each lives with the module that enforces it and is imported here, so the page
-// and the behaviour can't drift; the ones below are still waiting for their module (billing →
-// P4/P5) — MOVE each there when it lands. Change the reality and the constant together. ──
+// and the behaviour can't drift; the ones defined below have no enforcing module yet — MOVE each
+// there when it lands. Change the reality and the constant together. ──
 /** Trash is permanently deleted after this many days — enforced by the trash.autoPurge job. */
 export { TRASH_RETENTION_DAYS };
 /**
@@ -53,6 +60,14 @@ export { TRASH_RETENTION_DAYS };
  * enforced by the outbox's sweep of the account's prefix (files.policy.ts).
  */
 export { DELETION_STORAGE_PURGE_DAYS };
+/**
+ * Billing windows (billing.policy.ts; suggested defaults, see docs/BACKEND_PLAN.md §13): usage
+ * alerts at these percentages of the monthly limit (billing.alerts), and from P5 the payment due
+ * window and the past-due → suspended → deleted steps.
+ */
+export { LIMIT_ALERT_PERCENTS, PAYMENT_DUE_DAYS, PAST_DUE_TO_SUSPENDED_DAYS, SUSPENDED_TO_DELETION_DAYS };
+/** Minimum notice before a price increase takes effect — enforced by the price-book rule (metering.rules.ts). */
+export { PRICE_CHANGE_NOTICE_DAYS };
 /** Deadline for actioning an emailed deletion request. In-app deletion closes the account at once. */
 export const DELETION_REQUEST_SLA_DAYS = 30;
 /** How long deleted rows can still exist in routine encrypted database backups (nightly dumps). */
@@ -61,18 +76,6 @@ export const DELETION_BACKUP_RETENTION_DAYS = 30;
 export const DELETION_LOG_RETENTION_DAYS = 90;
 /** How long statements and payment records are kept. TODO(legal): confirm with a CA. */
 export const DELETION_BILLING_RETENTION_YEARS = 8;
-
-// Billing policy (docs/BACKEND_PLAN.md §7 — suggested defaults; TODO(decision): confirm, see §13).
-/** Usage alerts, as a percentage of the user's monthly auto-pay limit. */
-export const LIMIT_ALERT_PERCENTS = [80, 100] as const;
-/** Days a payment link for an amount above the limit (or a failed debit) stays due. */
-export const PAYMENT_DUE_DAYS = 7;
-/** Days an account stays read-only (past due) before it is suspended. */
-export const PAST_DUE_TO_SUSPENDED_DAYS = 15;
-/** Days an account stays suspended before its data is permanently deleted. */
-export const SUSPENDED_TO_DELETION_DAYS = 30;
-/** Minimum notice before a price increase takes effect. */
-export const PRICE_CHANGE_NOTICE_DAYS = 30;
 
 /** Shared HTML shell (head + readable document styling) wrapping a document body. */
 function renderLegalPage(title: string, lastUpdated: string, body: string): string {
@@ -282,8 +285,8 @@ export function renderTermsOfService(): string {
         bytes &mdash; the same unit your phone uses to show file sizes.</li>
       <li><strong>Monthly bill.</strong> Usage is billed per calendar month (India time), plus GST
         where it applies. You can see your usage so far, and an estimate of the month&rsquo;s bill,
-        in the app at any time. Very small amounts may be carried forward to the next month instead
-        of being charged.</li>
+        in the app at any time. A bill below our minimum charge is not charged on its own: it is
+        carried forward and added to your next bill.</li>
       <li><strong>Price changes.</strong> We will tell you at least ${PRICE_CHANGE_NOTICE_DAYS} days
         before a price increase takes effect, and it applies only to usage after that date.</li>
     </ul>

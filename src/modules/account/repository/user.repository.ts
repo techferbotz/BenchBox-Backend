@@ -59,8 +59,11 @@ export class UserRepository {
    *   - every device is signed out;
    *   - the tree and the upload sessions are deleted (file and folder names are personal data; no
    *     device needs tombstones once the account is gone);
+   *   - the auto-pay settings (the monthly limit) and the notifications go: nothing will be sent
+   *     to the account again;
    *   - the user is anonymised. The row stays as an anonymous anchor for records the law makes us
-   *     keep (the storage log now; statements and payments from P5).
+   *     keep: the storage log, the closed days and statements (and payments, from P5). The days
+   *     still open are closed, and billed, as usual.
    * Returns the bytes released.
    */
   async anonymiseAndSignOut(userId: string, now: Date, cleanupJobs: readonly OutboxJobInput[]): Promise<bigint> {
@@ -73,6 +76,8 @@ export class UserRepository {
         await tx.session.deleteMany({ where: { userId } });
         await tx.uploadSession.deleteMany({ where: { userId } });
         await tx.node.deleteMany({ where: { userId } });
+        await tx.billingAccount.deleteMany({ where: { userId } });
+        await tx.notification.deleteMany({ where: { userId } });
         await tx.user.update({
           where: { id: userId },
           data: { googleSub: null, email: null, name: null, photoUrl: null, deletedAt: now },

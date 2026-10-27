@@ -34,7 +34,6 @@ import { prisma } from "../prisma/client";
 import { AccountService } from "../modules/account/service/account.service";
 import { UploadDto } from "../modules/files/dto/upload.dto";
 import {
-  FREE_STORAGE_BYTES,
   MAX_PENDING_UPLOADS,
   UPLOAD_CLEANUP_DELAY_SECONDS,
   UPLOAD_MAX_AGE_HOURS,
@@ -45,6 +44,7 @@ import { ReconcileService } from "../modules/files/service/reconcile.service";
 import { StartUploadInput, UploadsService } from "../modules/files/service/uploads.service";
 import { meteringService } from "../modules/metering/service/metering.service";
 import { NodeDto } from "../modules/nodes/dto/node.dto";
+import { NotificationsService } from "../modules/notifications/service/notifications.service";
 import { TRASH_RETENTION_DAYS } from "../modules/nodes/nodes.policy";
 import { TreeService } from "../modules/nodes/service/tree.service";
 import { OutboxService } from "../modules/outbox/service/outbox.service";
@@ -61,7 +61,7 @@ const advanceMinutes = (minutes: number): void => {
 const fake = new FakeObjectStore();
 const uploads = new UploadsService({ now, store: fake });
 const files = new FilesService({ now, store: fake });
-const outbox = new OutboxService({ now, store: fake });
+const outbox = new OutboxService({ now, store: fake, notifications: new NotificationsService({ now, push: null, email: null }) });
 const reconcile = new ReconcileService({ now, store: fake });
 const tree = new TreeService({ now });
 const sync = new SyncService();
@@ -349,8 +349,9 @@ const main = async (): Promise<void> => {
     await rejectsWith(start(u, { name: "more.bin", size: 600_000_000 }), "STORAGE_LIMIT_REACHED");
     await uploads.abort(u, big.id); // the reservation goes with it
     const kept = await uploadFile(u, { name: "kept.bin", size: 1_900_000_000 });
-    const usage = await meteringService.usage(u);
-    assert.deepEqual([usage.usedBytes, usage.limitBytes, usage.freeBytes], [1_900_000_000, FREE_STORAGE_BYTES, FREE_STORAGE_BYTES]);
+    const usage = await meteringService.usage(u, now());
+    // The allowance is the price book's free allowance: 2 GB in the seeded (suggested) prices.
+    assert.deepEqual([usage.usedBytes, usage.limitBytes, usage.freeBytes], [1_900_000_000, 2_000_000_000, 2_000_000_000]);
     // Replacing the 1.9 GB file with a 1.95 GB one fits: the old bytes go when the new ones arrive.
     const swap = await start(u, { name: "kept.bin", size: 1_950_000_000, onConflict: "replace" });
     await rejectsWith(start(u, { name: "extra.bin", size: 200_000_000 }), "STORAGE_LIMIT_REACHED");
@@ -427,7 +428,7 @@ const main = async (): Promise<void> => {
     const loose = await uploadFile(u, { name: "loose.bin", size: 50 });
     await tree.trash(u, box.node.id);
     assert.equal(await storedBytes(u), 350n, "the trash still counts");
-    assert.equal((await meteringService.usage(u)).trashBytes, 300);
+    assert.equal((await meteringService.usage(u, now())).trashBytes, 300);
     await tree.purge(u, box.node.id);
     assert.equal(await storedBytes(u), 50n);
     assert.deepEqual((await events(u)).slice(-1)[0], { deltaBytes: -300n, totalAfter: 50n, reason: "PURGE" });

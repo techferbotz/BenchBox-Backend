@@ -11,8 +11,11 @@ since 2026-10-01. P1 (accounts: Google sign-in, device sessions, account deletio
 trash, search, sync feed, worker) and P3 (uploads, downloads, thumbnails, the storage log, the outbox,
 reconciliation; deployed 2026-10-23) are live at `https://benchbox.ferbotz.com`. Google sign-in is
 configured since 2026-10-26 (only the app's debug key is registered so far; release-key SHA-1s arrive
-as APP requests). File storage is on since 2026-10-26 (R2 bucket `benchbox-files`). Next: P4
-(metering, statements, FCM + SES).** Deploy facts: `docs/DEPLOY.md`.
+as APP requests). File storage is on since 2026-10-26 (R2 bucket `benchbox-files`). P4 (metering:
+the daily close and the price book; monthly statements; usage alerts sent through FCM + SES) is
+built and checked (2026-10-27, BE-009) but not deployed: deploying needs the owner's OK, and push
+and email stay off until their credentials exist. Next: P5 (the auto-pay mandate, settlement).**
+Deploy facts: `docs/DEPLOY.md`.
 
 **Renamed from BrimBox on 2026-10-22; the box switched over on 2026-10-23.** Everything — code, docs,
 domain, Compose project, checkout path, database and role, GitHub repo, Drive folders — uses BenchBox /
@@ -58,9 +61,11 @@ Full reasons in `docs/BACKEND_PLAN.md` §2.
 - **D5 — A long-running `worker` service** (same image, `node dist/worker.js`) runs daily jobs under an
   advisory lock with a `JobRun` row per job and IST day, instead of host-crontab scripts. Since P2:
   trash auto-purge, tombstone compaction, expired-session cleanup. Since P3: the outbox drain (every
-  minute), upload expiry (every 15 min), storage reconciliation (daily).
+  minute), upload expiry (every 15 min), storage reconciliation (daily). Since P4: the daily close
+  (00:10 IST), statements (monthly, the 1st at 00:30), usage alerts (hourly).
 - **D6 — Razorpay recurring payments** (the mandate) plus RevenueCat (Play credits).
-- **D7 — FCM + Amazon SES** for billing alerts, each behind one file.
+- **D7 — FCM + Amazon SES** for billing alerts, each behind one file (`integrations/fcm.ts`,
+  `integrations/ses.ts`), sent through the outbox. Unconfigured → skipped and logged.
 - **Smaller ones:** the failure envelope always carries `code` (allowed by `code?`).
 
 ## Commands
@@ -70,10 +75,12 @@ npm run dev               # ts-node-dev on http://localhost:8080
 npm run dev:worker        # the scheduled-jobs worker, locally
 npm run typecheck         # tsc --noEmit — run after every change
 npm run build             # tsc -> dist/  (run npm run prisma:generate after schema changes)
-npm run check:all         # pure fixture scripts: check:config, check:legal, check:auth, check:tree, check:storage
+npm run check:all         # pure fixture scripts: check:config, check:legal, check:auth, check:tree, check:storage,
+                          #   check:metering (the §6 worked example, money, statements, alerts, copy)
 npm run check:auth-db     # sign-in/session flows against a LOCAL database (refuses any other host)
 npm run check:tree-db     # tree, trash, sync, compaction, jobs against a LOCAL database
 npm run check:storage-db  # uploads, purges, outbox, reconcile against a LOCAL database + in-memory R2
+npm run check:billing-db  # daily close, statements, summary/usage, alerts, delivery against a LOCAL database
 npm run check:r2-live     # real R2 behaviour against the DEV bucket (refuses a non-dev bucket)
 npm run prisma:migrate    # create/apply a migration locally (prisma migrate dev)
 ```
@@ -91,24 +98,31 @@ Local env: copy `.env.example` to `.env`. Variables are read **only** in `src/co
 | `REMOTE_CONFIG_OVERRIDES` | no | JSON patch over the default `/config` document; a bad patch fails startup |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | all or none | Cloudflare R2. None → file endpoints answer 503 and storage jobs skip; a partial set fails startup. Production: `benchbox-files`; local: `benchbox-files-dev` |
 | `R2_ENDPOINT` | no | Override the S3 endpoint (a local S3-compatible stand-in); production leaves it unset |
+| `FCM_PROJECT_ID`, `FCM_CLIENT_EMAIL`, `FCM_PRIVATE_KEY` | all or none | Firebase service account for push (`benchbox-75a31`). None → push is skipped and logged; a partial set fails startup |
+| `SES_REGION`, `SES_FROM`, `SES_ACCESS_KEY_ID`, `SES_SECRET_ACCESS_KEY` | all or none | Amazon SES for billing emails (a send-only IAM user). None → email is skipped and logged; a partial set fails startup |
 | `APP_HOST_PORT` | prod only | Loopback port compose publishes on the box (8094) |
 
 ## Directory map
 
 ```
 prisma/schema.prisma            User, Session, Node, Blob, UploadSession, StorageEvent, OutboxJob,
-                                JobRun (+ migrations/)
+                                JobRun, PriceBook, UsageDay, Statement, BillingAccount, Notification
+                                (+ migrations/; the P4 one seeds the price book and adds CHECKs)
 src/
   app.ts                        express app: middleware, root routes, 404, error handler, listen
   worker.ts                     the worker process: scheduled jobs (D5)
   config/env.ts                 the only reader of process.env (fail fast)
   prisma/client.ts, sql.ts      the Prisma singleton; raw-SQL helpers (utc, lockUserRow) — repositories only
   storage/objectStore.ts        the ObjectStore interface services depend on
-  storage/r2Storage.ts          sole importer of the AWS SDK (R2: presign, multipart, head, delete, list)
+  storage/r2Storage.ts          sole importer of the S3 SDK (R2: presign, multipart, head, delete, list)
   common/                       deepMerge, duration, validation, errors/, response/,
                                 middleware/ (auth, rateLimit, device, requestLogger),
-                                utils/tokens.ts (sole importer of jsonwebtoken)
+                                utils/tokens.ts (sole importer of jsonwebtoken),
+                                money.ts (ALL money arithmetic: decimal.js, half-up),
+                                time.ts (IST days and months)
   integrations/googleVerifier.ts  sole importer of google-auth-library
+  integrations/senders.ts       the PushSender / EmailSender interfaces the notifications service uses
+  integrations/fcm.ts, ses.ts   sole importers of firebase-admin and the SES SDK (null when unconfigured)
   modules/
     auth/                       /api/v1/auth: sign-in, refresh (rotation), logout; Session repository;
                                 auth.rules.ts (pure decisions) + auth.policy.ts (numbers)
@@ -119,8 +133,16 @@ src/
     files/                      /api/v1/uploads + /api/v1/files: uploads, downloads, thumbnails,
                                 reconciliation; Blob + UploadSession repositories; files.rules.ts
                                 (part plan, keys, media types) + files.policy.ts (sizes, lifetimes)
-    metering/                   MeteringTx.recordStorageChange (THE choke point), usage, accounting
-    outbox/                     after-commit work, retried until done (R2 deletes); outbox.jobs.ts (pure)
+    metering/                   MeteringTx.recordStorageChange (THE choke point), usage, accounting;
+                                the price book and the daily close (UsageDay); metering.rules.ts (pure:
+                                integrating the log, pricing a day, priceBookFor, projectMonth)
+    billing/                    /api/v1/billing: summary, usage, statements; the monthly close
+                                (Statement), usage alerts; BillingAccount (the monthly limit);
+                                billing.rules.ts (pure) + billing.policy.ts (alert percents, windows)
+    notifications/              Notification (dedupeKey), the alerts' words (notifications.messages.ts,
+                                pure), delivery through FCM/SES
+    outbox/                     after-commit work, retried until done (R2 deletes, notifications);
+                                outbox.jobs.ts (pure)
     sync/                       /api/v1/sync/changes: the change feed; tombstone compaction
     jobs/                       scheduler (daily + interval jobs), JobRun repository, jobs.ts (the job
                                 list), jobs.schedule.ts
@@ -157,14 +179,29 @@ repository/ dto/`. External SDKs each sit behind exactly one file (`storage/r2St
   next `syncSeq` first, which serialises a user's tree changes and makes sibling-name uniqueness
   race-free. Every node a transaction touches gets that one seq, and the feed orders by (syncSeq, id).
   Invariant: an active node's ancestors are all active.
-- **Money** (from P4): integer paise in `BigInt`, decimal strings on the wire, `decimal.js` half-up, all
-  arithmetic in one `money.ts`. Metering keeps exact charges in micro-paise; statements round once.
+- **Money:** integer paise in `BigInt`, decimal strings on the wire, `decimal.js` half-up, all
+  arithmetic in `common/money.ts`. Metering keeps exact daily charges in micro-paise (`UsageDay`);
+  statements round the month's sum once, then add GST on the rounded subtotal. Billing days and months
+  are IST (`common/time.ts`); timestamps stay UTC.
+- **Prices are data:** `PriceBook` rows, one per month at most (`effectiveFrom` is the 1st: a CHECK).
+  Change a price by INSERTING a row, never by editing one that has priced a day (`docs/DEPLOY.md`,
+  "Changing the price"). `priceBookFor` makes an increase wait `PRICE_CHANGE_NOTICE_DAYS` after the
+  row's `createdAt`, whatever its `effectiveFrom` says. The storage allowance is the price book's
+  `freeBytes` (until P5's auto-pay lifts it).
+- **The daily close** (`MeteringService.closeAccount`) resumes after an account's newest `UsageDay`
+  (its `endBytes` and `lastEventId`) and never rewrites a closed day: re-running it writes nothing.
+  Events take effect at max(`at`, the previous event's effect): the log never runs backwards. Live
+  numbers (`daysSince`) run the same walk up to now, so they match what the close will write.
 - **Every change to stored bytes goes through `MeteringTx.recordStorageChange()`** in the same
   transaction as the metadata change: +bytes at upload completion, −bytes through
   `TreeTx.releaseContent` (purge, replace) and account deletion. Never write `User.storedBytes`
   anywhere else. Bills (P4) are computed from the append-only `StorageEvent` log.
 - **R2 deletions go through the outbox**, queued in the transaction that makes them necessary, and
   drained by the worker every minute. A request never deletes from R2 inline.
+- **Notifications** are rows made with `NotificationTx.create` in the transaction they announce, with
+  a unique `dedupeKey` (making one twice makes it once) and a `SEND_NOTIFICATION` outbox job. Delivery
+  never crashes on a missing channel: unconfigured, no device or no address → `SKIPPED` and logged.
+  Never log a push token or an email address.
 - **Storage calls in a request** go through `storageCall()` (an R2 failure is a 503
   `STORAGE_UNAVAILABLE`, not a 500) after `requireStore()` (503 `STORAGE_NOT_CONFIGURED`). Services take
   their `ObjectStore` as a constructor dep, like the Google verifier. Never log a presigned URL.
@@ -198,6 +235,10 @@ repository/ dto/`. External SDKs each sit behind exactly one file (`storage/r2St
   planner scans the whole `Node` table once per frontier row (a 70,000-file folder took minutes).
   `TreeTx.subtreeIds` goes level by level on the `parentId` index; check:storage-db pins 20,000 files.
 - The request logger prints URLs: redact share tokens (`/s/:token`) before P7 ships.
+- A monthly job is due all month from the 1st's time on, so a fresh worker runs `billing.closeCycle`
+  at once for the current month's period. That is safe: it bills only months that have ended.
+- `check:billing-db` runs the real jobs (`closeDays`, `closeCycle`, `alerts.run`), which walk every
+  account in the local database: run the DB checks one after another, never at the same time.
 - The shared box (t3.small, 40 GiB disk since 2026-10-09) runs five apps plus Postgres. Every app's
   on-box builds grow Docker's cache, so check `df -h /` before an image build. Never prune Docker
   without asking: the unused images may be other apps' rollback copies (`docs/DEPLOY.md` § The box).

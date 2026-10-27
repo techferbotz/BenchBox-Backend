@@ -1,14 +1,16 @@
-import { duePeriod, istParts } from "./jobs.schedule";
+import { dueMonthlyPeriod, duePeriod, istParts } from "./jobs.schedule";
 import { jobRunRepository } from "./repository/jobRun.repository";
 
 // The worker's scheduler (deviation D5): once a minute, every job that's due and unclaimed runs —
-// a daily job once per IST date, an interval job every N minutes. Jobs must be idempotent: a crash
-// mid-run means it runs again.
+// a daily job once per IST date, a monthly job once per IST month, an interval job every N minutes.
+// Jobs must be idempotent: a crash mid-run means it runs again.
 
 export interface JobSpec {
   name: string;
-  /** IST time of day a daily job becomes due, "HH:MM". Set this or `everyMinutes`. */
+  /** IST time of day a daily job becomes due, "HH:MM". Set exactly one of the three schedules. */
   dailyAtIst?: string;
+  /** IST time on the 1st of each month a monthly job becomes due, "HH:MM". */
+  monthlyAtIst?: string;
   /** Run every this many minutes. */
   everyMinutes?: number;
   /** Does the work; returns a one-line summary for the JobRun row and the log. */
@@ -23,10 +25,20 @@ export interface Scheduler {
   stop: () => void;
 }
 
-export const describeSchedule = (job: JobSpec): string =>
-  job.dailyAtIst ? `daily @ ${job.dailyAtIst} IST` : `every ${job.everyMinutes} min`;
+export const describeSchedule = (job: JobSpec): string => {
+  if (job.dailyAtIst) return `daily @ ${job.dailyAtIst} IST`;
+  if (job.monthlyAtIst) return `monthly on the 1st @ ${job.monthlyAtIst} IST`;
+  return `every ${job.everyMinutes} min`;
+};
 
 const intervalMsOf = (job: JobSpec): number | null => (job.everyMinutes ? job.everyMinutes * 60_000 : null);
+
+/** The period the job is due for now (null: not yet), which is also its JobRun key. */
+const periodOf = (job: JobSpec, now: Date): string | null => {
+  if (job.dailyAtIst) return duePeriod(job.dailyAtIst, now);
+  if (job.monthlyAtIst) return dueMonthlyPeriod(job.monthlyAtIst, now);
+  return istParts(now).date;
+};
 
 export const startScheduler = (
   jobs: JobSpec[],
@@ -34,8 +46,10 @@ export const startScheduler = (
 ): Scheduler => {
   for (const job of jobs) {
     const every = job.everyMinutes;
-    const valid = job.dailyAtIst ? every === undefined : every !== undefined && Number.isInteger(every) && every >= 1;
-    if (!valid) throw new Error(`Job ${job.name} needs exactly one of dailyAtIst or everyMinutes (a whole number ≥ 1)`);
+    const schedules = [job.dailyAtIst, job.monthlyAtIst, every].filter((value) => value !== undefined).length;
+    const valid = schedules === 1 && (every === undefined || (Number.isInteger(every) && every >= 1));
+    if (!valid) throw new Error(`Job ${job.name} needs exactly one of dailyAtIst, monthlyAtIst or everyMinutes (a whole number ≥ 1)`);
+    periodOf(job, new Date()); // a malformed HH:MM fails the boot, not the job's first run
   }
   const now = options.now ?? (() => new Date());
   let busy = false;
@@ -45,7 +59,7 @@ export const startScheduler = (
     busy = true;
     try {
       for (const job of jobs) {
-        const period = job.dailyAtIst ? duePeriod(job.dailyAtIst, now()) : istParts(now()).date;
+        const period = periodOf(job, now());
         if (period === null) continue;
         if (!(await jobRunRepository.claim(job.name, period, now(), intervalMsOf(job)))) continue;
         const started = Date.now();
