@@ -2,7 +2,7 @@
   Reference doc — the current contract the BenchBox app builds against.
   Source of truth: the backend repo's docs/FRONTEND_API.md. Mirrored to
   BenchBox-Contract/backend/API.md whenever a CHANGELOG entry says this file moved.
-  Last refreshed: 2026-10-27 (BE-009).
+  Last refreshed: 2026-10-27 (BE-010).
 -->
 
 # BenchBox — Frontend (Client) API
@@ -85,8 +85,7 @@ so they are listed together here:
   device.
 - **Sync is a change feed** (live since BE-003, §7) with an opaque cursor, designed for a local Room
   cache. No device clocks are involved anywhere.
-- **Pay-as-you-use billing** (BE-009, §10–11; not deployed yet: until a later BE entry says it is
-  live, `/api/v1/billing/*` answers `404 NOT_FOUND`). Storage is measured continuously and billed by the day,
+- **Pay-as-you-use billing** (live since BE-010, §10–11). Storage is measured continuously and billed by the day,
   each calendar month (India time), with GST. The app **never computes a charge**: it shows the amounts
   the server sends, as paise strings. Until auto-pay exists (below), no account can store more than the
   free allowance, so every amount is ₹0 and there are no statements yet; build the screens against the

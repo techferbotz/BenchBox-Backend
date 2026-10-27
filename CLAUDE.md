@@ -13,8 +13,8 @@ reconciliation; deployed 2026-10-23) are live at `https://benchbox.ferbotz.com`.
 configured since 2026-10-26 (only the app's debug key is registered so far; release-key SHA-1s arrive
 as APP requests). File storage is on since 2026-10-26 (R2 bucket `benchbox-files`). P4 (metering:
 the daily close and the price book; monthly statements; usage alerts sent through FCM + SES) is
-built and checked (2026-10-27, BE-009) but not deployed: deploying needs the owner's OK, and push
-and email stay off until their credentials exist. Next: P5 (the auto-pay mandate, settlement).**
+live since 2026-10-27 (BE-009, BE-010); push and email stay off, skipped and logged, until their
+credentials exist. Next: P5 (the auto-pay mandate, settlement).**
 Deploy facts: `docs/DEPLOY.md`.
 
 **Renamed from BrimBox on 2026-10-22; the box switched over on 2026-10-23.** Everything — code, docs,

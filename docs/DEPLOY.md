@@ -57,11 +57,19 @@ This page covers BenchBox's setup on the box and its project-specific steps.
     fix was deployed the same day (commit `c714af5`, box at `56f23a9`; no migration).
 
   The tokens were pasted into a chat session: roll them when convenient (R2 setup, below).
-- **2026-10-27 — P4 built, not deployed** (BE-009): metering's daily close and price book, monthly
-  statements, the billing endpoints, and usage alerts by push and email. Deploying it waits on the
-  owner's OK ([P4 deploy](#p4-deploy-metering-statements-alerts-runbook-not-run-yet)). Push and email
-  stay off, skipped and logged, until their credentials exist ([FCM](#push-fcm-setup-human),
-  [SES](#email-ses-setup-human)).
+- **2026-10-27 — P4 deployed** (commit `65663fa`, BE-009/BE-010;
+  [runbook](#p4-deploy-metering-statements-alerts-runbook-done-2026-10-27)): metering's daily close and
+  price book, monthly statements, `/api/v1/billing/*`, and usage alerts.
+  - **Migration:** `20261027082857_metering_billing`, which seeded the price book (₹2.50 per GB-month,
+    2 GB free, 18% GST, ₹10 minimum, from 2026-10-01).
+  - **Worker:** nine jobs. The first runs all SUCCEEDED: `metering.closeDay` closed 0 days (no account
+    has stored anything yet), `billing.closeCycle` (period `2026-10`) made 0 statements, and
+    `billing.alerts` checked 0 accounts.
+  - **Notifications:** push and email are skipped (and logged) until their credentials exist
+    ([FCM](#push-fcm-setup-human), [SES](#email-ses-setup-human)).
+  - **Disk:** 11 GB free after the builds.
+  - The image's `npm audit` reports 4 high-severity issues, all from before P4: `body-parser` through
+    Express 5, and `deepmerge-ts` through Prisma 6's config package.
 
 ## Who does what
 
@@ -97,7 +105,7 @@ access or touches an account. Claude prepares the exact steps for each.
 | Firebase project `benchbox-75a31` (number `339320620607`) with the Android app; `google-services.json` to the app through the contract (BE-007) | human, then Claude | done 2026-10-26 |
 | FCM sending credential for the server: a service account with only the FCM role, its JSON key's three fields into the details doc ([Push (FCM) setup](#push-fcm-setup-human)) | human | pending (P4 built) |
 | SES: a verified sending domain (DKIM records in Cloudflare), production access, and a send-only IAM user's keys into the details doc ([Email (SES) setup](#email-ses-setup-human)) | human (IAM + DNS + console, protocol 02) | pending (P4 built) |
-| P4 deploy: migrate, rebuild app + worker | Claude, over SSH, with the owner's OK | pending |
+| P4 deploy: migrate, rebuild app + worker | Claude, over SSH, with the owner's OK | done 2026-10-27 |
 | `FCM_*` / `SES_*` from the details doc into the server `.env`, never displayed; recreate app + worker | Claude | after each credential exists |
 | Rename switch on the box, with the P3 deploy (runbook below) | Claude, over SSH | done 2026-10-23 |
 | Old domain: its DNS record was renamed, so no redirect; old nginx site and certificate removed, old images removed | Claude | done 2026-10-23 |
@@ -405,7 +413,7 @@ In the Cloudflare account that already hosts `ferbotz.com`:
 No CORS rule is needed: the Android app isn't a browser. The share pages (P7) will need one only if
 they fetch files with JavaScript.
 
-## P4 deploy: metering, statements, alerts (runbook, not run yet)
+## P4 deploy: metering, statements, alerts (runbook, done 2026-10-27)
 
 A schema change (`PriceBook`, `UsageDay`, `Statement`, `BillingAccount`, `Notification`), so migrate
 first. The migration also **seeds the price book** with the suggested defaults (₹2.50 per GB-month,
