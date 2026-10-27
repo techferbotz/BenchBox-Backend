@@ -4,8 +4,9 @@
 //   npm run check:auth
 //
 // Pins the security-relevant decisions: access-token signing and rejection, refresh-token shape,
-// every branch of the rotation decision, the re-auth rule for destructive actions, and how a
-// verified Google payload becomes an identity. The database-backed flows are check:auth-db.
+// every branch of the rotation decision, the re-auth rule for destructive actions, how a verified
+// Google payload becomes an identity, and that a request body a client broke is a 4xx, never a
+// 500. The database-backed flows are check:auth-db.
 
 // googleVerifier imports config/env.ts, which fails fast on missing REQUIRED vars. Placeholders for
 // any that are missing, set BEFORE the imports below load it (tsc keeps statement order in CommonJS).
@@ -18,8 +19,10 @@ for (const [key, value] of Object.entries({
 }
 
 import assert from "node:assert/strict";
+import { Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { parseDurationSeconds } from "../common/duration";
+import { errorHandler } from "../common/errors/errorHandler";
 import {
   createAccessTokenSigner,
   generateRefreshToken,
@@ -218,6 +221,54 @@ check("google: unverified email, missing email, missing sub or iat are refused",
   refused(undefined);
   // A blank display name is just absent.
   assert.equal(identityFromPayload({ ...base, name: "   " }).name, null);
+});
+
+// ---------------------------------------------------------------- request bodies
+check("a body the client broke is a 4xx, never a 500: malformed, too large, corrupt or trailing compressed bytes", () => {
+  interface StubResponse {
+    statusCode: number;
+    body: { code?: string };
+    headersSent: boolean;
+    status(code: number): StubResponse;
+    json(body: { code?: string }): StubResponse;
+    set(): StubResponse;
+  }
+  const respond = (err: unknown): [number, string] => {
+    const res: StubResponse = {
+      statusCode: 0,
+      body: {},
+      headersSent: false,
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      json(body) {
+        this.body = body;
+        return this;
+      },
+      set() {
+        return this;
+      },
+    };
+    errorHandler(err, {} as Request, res as unknown as Response, () => undefined);
+    return [res.statusCode, res.body.code ?? ""];
+  };
+  // As express.json() raises them (http-errors: `expose` and a 4xx status).
+  const bodyError = (message: string, props: Record<string, unknown>) => Object.assign(new Error(message), { expose: true, ...props });
+  assert.deepEqual(respond(bodyError("Unexpected end of JSON input", { type: "entity.parse.failed", status: 400 })), [400, "INVALID_JSON"]);
+  assert.deepEqual(respond(bodyError("request entity too large", { type: "entity.too.large", status: 413 })), [413, "PAYLOAD_TOO_LARGE"]);
+  // body-parser ≥ 2.4 refuses bytes after a gzip stream with a bare zlib error (GHSA-27r3-jxmh-p828).
+  assert.deepEqual(respond(bodyError("incorrect header check", { code: "Z_DATA_ERROR", status: 400, statusCode: 400 })), [400, "BAD_REQUEST"]);
+  assert.deepEqual(respond(bodyError('unsupported content encoding "compress"', { type: "encoding.unsupported", status: 415 })), [400, "BAD_REQUEST"]);
+  // Anything else is a bug: 500 (and logged, here silenced).
+  const log = console.error;
+  console.error = () => undefined;
+  try {
+    assert.deepEqual(respond(new Error("boom")), [500, "INTERNAL"]);
+    assert.deepEqual(respond(Object.assign(new Error("not for clients"), { status: 400 })), [500, "INTERNAL"], "no `expose`, no 400");
+  } finally {
+    console.error = log;
+  }
 });
 
 console.log(`\ncheck:auth — ${passed} checks passed`);
