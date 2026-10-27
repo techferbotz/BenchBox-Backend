@@ -68,8 +68,12 @@ This page covers BenchBox's setup on the box and its project-specific steps.
   - **Notifications:** push and email are skipped (and logged) until their credentials exist
     ([FCM](#push-fcm-setup-human), [SES](#email-ses-setup-human)).
   - **Disk:** 11 GB free after the builds.
-  - The image's `npm audit` reports 4 high-severity issues, all from before P4: `body-parser` through
-    Express 5, and `deepmerge-ts` through Prisma 6's config package.
+  - **The same day, `body-parser` 2.3.0 → 2.4.0** (GHSA-27r3-jxmh-p828: trailing bytes after a
+    compressed request body), with `qs` 6.16.1, and a body the server can't read answers 400 instead
+    of 500. Commit `64e2e06`, no migration, app + worker rebuilt. Checked live: malformed JSON 400,
+    over 1 MB 413, gzip JSON parsed, gzip with trailing bytes 400. 9.1 GB free afterwards.
+  - `npm audit` now reports 3 high-severity issues, all `deepmerge-ts` through Prisma 6's config
+    package. The fix needs Prisma 7, which the project avoids (`CLAUDE.md`, Gotchas).
 
 ## Who does what
 
