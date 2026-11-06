@@ -6,7 +6,8 @@ match what the server actually does. Theme: **Workbench, quiet**: soft neutrals,
 and a muted red kept for attention (final palette chosen 2026-10-23).
 
 Keep it in step with those docs: when a feature's behaviour changes, change its prompt here in the same
-commit.
+commit. The web app's brief, `WEB_UI_DESIGN_PROMPT.md`, shares this theme, words and sample data:
+change both together.
 
 ## How to use it
 

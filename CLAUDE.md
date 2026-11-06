@@ -152,8 +152,9 @@ src/
                                 scripts/support/fakeObjectStore.ts is the in-memory R2
   types/express.d.ts            req.userId / req.sessionId / req.deviceId
 docs/                           BACKEND_PLAN.md, FRONTEND_API.md, REMOTE_CONFIG.md, DEPLOY.md,
-                                UI_DESIGN_PROMPT.md (the Claude Design brief for the app's UI; keep
-                                it in step with features)
+                                UI_DESIGN_PROMPT.md and WEB_UI_DESIGN_PROMPT.md (the Claude Design
+                                briefs for the Android app and the web app; one theme, kept in step
+                                with features)
 ```
 
 Feature modules follow Billanta/Curiously: `modules/<f>/<f>.routes.ts` + `controller/ service/
